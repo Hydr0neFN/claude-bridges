@@ -1,3 +1,5 @@
+**English** · [繁體中文](README.zh-TW.md)
+
 # claude-bridges
 
 MCP servers that let Claude Code delegate to other coding CLIs — cross-model second opinions, structured reviews, and a multi-engine consultation panel.
