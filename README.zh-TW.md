@@ -31,13 +31,18 @@ flowchart TD
 
 ## 實際接通的引擎
 
-`consult` 工具目前會扇出至**三個引擎**：
+`consult` 工具目前會扇出至**四個引擎**：
 
 | Engine | Wraps | Tier |
 |---|---|---|
 | `copilot` | GitHub Copilot CLI (`copilot -p`) | Free (GitHub) |
 | `codex` | OpenAI Codex CLI (`codex exec`) | Free (ChatGPT) |
 | `agy` | Antigravity / Gemini CLI | Paid (Gemini Pro/Flash) |
+| `deepseek` | 以 `deeperseeker` proxy 代理 DeepSeek 網頁帳號（HTTP，非 CLI） | Free（拋棄式帳號） |
+
+`deepseek` 採選用制：不在預設的 `CONSULT_ORDER` 之中，須以 `--order ...,deepseek` 指定，
+或將其寫入 `CONSULT_ORDER`。與其他 CLI 引擎不同，它沒有 cwd、shell 或檔案存取權限 ——
+只看得到 prompt 文字本身，因此送給它的 prompt 必須自帶完整脈絡。
 
 Grok 與其他模型已列入構想循環中，但尚未建立 bridge。本系統設計具備擴充引擎的能力 —— 每個引擎在 `lib/engines.js` 中僅需約 30 行程式碼。
 
@@ -153,6 +158,10 @@ codex login      # OpenAI Codex CLI
 | `CONSULT_PER_ENGINE_CHARS` | `20000` | `all` 模式下各引擎截斷字數 |
 | `CONSULT_ORDER` | `copilot,codex,agy` | 預設引擎順序 |
 | `CONSULT_MODE` | `all` | 預設模式（`all` 或 `first`） |
+| `DEEPSEEKER_BASE` | `http://127.0.0.1:4000` | deeperseeker proxy 的 base URL |
+| `DEEPSEEKER_MODEL` | `v4.1flash` | 傳給 proxy 的 model id |
+| `DEEPSEEKER_API_KEY` | （從 proxy `.env` 讀取） | Proxy API key，未設時回退至 `DEEPSEEKER_ENV_PATH` |
+| `DEEPSEEKER_ENV_PATH` | `~/Claude/deeperseeker/.env` | 環境變數未設時，從何處讀取金鑰 |
 
 ## 為什麼需要這個專案
 
