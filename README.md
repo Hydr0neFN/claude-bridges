@@ -31,13 +31,18 @@ This isn't "ask ChatGPT." Each model has a role, a sandbox, and a review gate. N
 
 ## What's Actually Wired
 
-The `consult` tool currently fans out to **three engines**:
+The `consult` tool currently fans out to **four engines**:
 
 | Engine | Wraps | Tier |
 |---|---|---|
 | `copilot` | GitHub Copilot CLI (`copilot -p`) | Free (GitHub) |
 | `codex` | OpenAI Codex CLI (`codex exec`) | Free (ChatGPT) |
 | `agy` | Antigravity / Gemini CLI | Paid (Gemini Pro/Flash) |
+| `deepseek` | `deeperseeker` proxy over a DeepSeek web account (HTTP, not a CLI) | Free (throwaway account) |
+
+`deepseek` is opt-in: it is not in the default `CONSULT_ORDER`, so pass `--order ...,deepseek`
+or set `CONSULT_ORDER` to include it. Unlike the CLI engines it gets no cwd, shell or file
+access — it only ever sees the prompt text, so give it self-contained prompts.
 
 Grok and others are in the aspirational loop but don't have bridges yet. The system is designed to add engines — each is ~30 lines in `lib/engines.js`.
 
@@ -153,6 +158,10 @@ codex login      # OpenAI Codex CLI
 | `CONSULT_PER_ENGINE_CHARS` | `20000` | Per-engine truncation in `all` mode |
 | `CONSULT_ORDER` | `copilot,codex,agy` | Default engine order |
 | `CONSULT_MODE` | `all` | Default mode (`all` or `first`) |
+| `DEEPSEEKER_BASE` | `http://127.0.0.1:4000` | deeperseeker proxy base URL |
+| `DEEPSEEKER_MODEL` | `v4.1flash` | Model id passed to the proxy |
+| `DEEPSEEKER_API_KEY` | (read from proxy `.env`) | Proxy API key; falls back to `DEEPSEEKER_ENV_PATH` |
+| `DEEPSEEKER_ENV_PATH` | `~/Claude/deeperseeker/.env` | Where to read the key from when the env var is unset |
 
 ## Why This Exists
 
