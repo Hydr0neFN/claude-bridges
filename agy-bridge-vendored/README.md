@@ -70,12 +70,15 @@ curl -o CLAUDE.md https://raw.githubusercontent.com/sshahzaiib/agy-bridge/main/C
 
 | Tool | Use for | Model routing (first available) |
 |---|---|---|
-| `analyze_files` | Files >200 lines, >3 files at once, logs, dumps, generated code | Gemini 3.5 Flash (High) → Gemini 3.1 Pro (Low) |
-| `deep_search` | git log/diff/blame archaeology, repo-wide greps | Gemini 3.5 Flash (Medium) → (High) |
-| `web_lookup` | Docs, API references, external/current knowledge | Gemini 3.5 Flash (Medium) → (High) |
-| `adversarial_review` | Plan critiques, design and code reviews | Gemini 3.1 Pro (High) → Claude Opus 4.6 (Thinking) → Flash (High) |
+| `analyze_files` | Files >200 lines, >3 files at once, logs, dumps, generated code | `gemini-3.6-flash-high` → `gemini-3.5-flash-high` → `gemini-3.1-pro-low` |
+| `deep_search` | git log/diff/blame archaeology, repo-wide greps | `gemini-3.6-flash-medium` → `-high` → `gemini-3.5-flash-medium` |
+| `web_lookup` | Docs, API references, external/current knowledge | `gemini-3.6-flash-medium` → `-high` → `gemini-3.5-flash-medium` |
+| `adversarial_review` | Plan critiques, design and code reviews | `gemini-3.1-pro-high` → `claude-opus-4-6-thinking` → `gemini-3.6-flash-high` |
 | `follow_up` | Continue a prior session by `session_id` — no context resend | inherits the session |
-| `delegate` | Anything else heavy | Gemini 3.5 Flash (High) |
+| `delegate` | Anything else heavy | `gemini-3.6-flash-high` → `gemini-3.5-flash-high` |
+
+> Chains locally patched for Gemini 3.6 Flash and for the slug-vs-display-name model-matching
+> bug — see [PATCHES.md](PATCHES.md). Reinstalling upstream 0.4.1 reverts them.
 
 All tools accept optional `cwd` (project root) and `model` (exact name from `agy models`; validated, with available models listed on mismatch).
 
@@ -83,7 +86,7 @@ Every response ends with a footer:
 
 ```
 ---
-[agy-bridge] model: Gemini 3.5 Flash (High) | session: 1f0c…-d4 (use follow_up to continue)
+[agy-bridge] model: gemini-3.6-flash-high | session: 1f0c…-d4 (use follow_up to continue)
 ```
 
 ### Model routing

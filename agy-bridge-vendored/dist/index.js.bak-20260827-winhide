@@ -32,8 +32,7 @@ function loadConfig(env = process.env) {
     defaultModel: env.AGY_DEFAULT_MODEL || void 0,
     skipPermissions: env.AGY_SKIP_PERMISSIONS !== "false",
     sandbox: env.AGY_SANDBOX === "true",
-    onFailure: env.AGY_ON_FAILURE === "strict" ? "strict" : "fallback",
-    retries: positiveInt(env.AGY_RETRIES, 2)
+    onFailure: env.AGY_ON_FAILURE === "strict" ? "strict" : "fallback"
   };
 }
 
@@ -99,13 +98,11 @@ ${available.join("\n")}`
     if (available === null) {
       return { models: [void 0], note: "could not list agy models; using agy's own default model" };
     }
-    const chainModels = opts.chain.map((m) => canonicalize(m, available)).filter((m) => m !== void 0);
+    const models = opts.chain.map((m) => canonicalize(m, available)).filter((m) => m !== void 0);
     const defaultCanonical = opts.defaultModel ? canonicalize(opts.defaultModel, available) : void 0;
-    // PATCH-DEFAULT-FIRST-20260912: AGY_DEFAULT_MODEL is the operator's current-tier
-    // choice; it must be tried BEFORE a hardcoded chain (e.g. ASYNC_CHAIN) that goes
-    // stale whenever a new model tier ships. Previously the default was appended last,
-    // so every no-explicit-model call silently ran the stale chain's first entry.
-    const models = defaultCanonical ? [defaultCanonical, ...chainModels.filter((m) => m !== defaultCanonical)] : chainModels;
+    if (defaultCanonical && !models.includes(defaultCanonical)) {
+      models.push(defaultCanonical);
+    }
     if (models.length === 0) {
       return { models: [void 0], note: "no preferred model available; using agy's own default model" };
     }
@@ -147,45 +144,6 @@ function detectQuota(log) {
   const resetSeconds = reset ? parseResetDuration(reset) : void 0;
   return { resetText: resetSeconds !== void 0 ? reset : void 0, resetSeconds };
 }
-// PATCH-TRANSIENT-RETRY-20260830: agy's startup eligibility check hits Google endpoints and fails
-// intermittently under parallel load. Those failures are retryable; a hard model/prompt
-// error is not. Keep them apart so only the retryable ones burn a retry.
-var TRANSIENT_RE = /eligibility check failed|failed to get profile picture|tls handshake timeout|net\/http|i\/o timeout|connection reset|connection refused|\bEOF\b|context canceled|context deadline exceeded|deadline exceeded|unavailable|temporarily unavailable|\b50[0234]\b|oauth2|token refresh|language server shutting down/i;
-// PATCH-TOOLARG-RETRY-20260830: agy validates the model's own tool-call arguments against a
-// protobuf schema (CortexStepRunCommand.wait_ms_before_async is a varint). When Gemini
-// emits e.g. {"WaitMsBeforeAsync":"0"} the run dies with
-//   invalid arguments: - at '/WaitMsBeforeAsync': got string, want integer
-// That is a nondeterministic model-output defect, not a caller error, so it is worth a
-// retry -- a resample almost always emits a well-formed call. Kept narrow on purpose:
-// it must see BOTH "invalid arguments" and a JSON-pointer "at '/...'" so a genuine bad
-// argument from the bridge is still a hard failure.
-var TOOLARG_RE = /invalid arguments/i;
-var TOOLARG_POINTER_RE = /at '\/[A-Za-z0-9_]+'/;
-function isModelToolArgError(text) {
-  return typeof text === "string" && TOOLARG_RE.test(text) && TOOLARG_POINTER_RE.test(text);
-}
-// PATCH-PRINTTIMEOUT-20260905: when agy's own --print-timeout (which the bridge sets from
-// timeoutSec) expires, agy exits non-zero with the opaque stderr "timeout waiting for
-// response". Echoed verbatim it looks like a network fault, so the real cause -- our own
-// timeout budget being too small -- stayed invisible. Rewrite it to name the knob.
-var PRINT_TIMEOUT_RE = /timeout waiting for response/i;
-function describeFailure(detail, timeoutSec) {
-  return PRINT_TIMEOUT_RE.test(detail) ? `agy hit its own --print-timeout of ${timeoutSec}s waiting for the model. Raise this tool's timeoutSec (or AGY_TIMEOUT) if the query legitimately needs longer.` : `agy failed: ${detail}`;
-}
-function isTransient(text) {
-  if (typeof text !== "string" || text.length === 0) return false;
-  return TRANSIENT_RE.test(text) || isModelToolArgError(text);
-}
-var TransientError = class extends Error {
-  constructor(model, detail) {
-    super(`agy transient failure on ${model ?? "agy's default model"}: ${detail}`);
-    this.name = "TransientError";
-    this.model = model;
-    this.detail = detail;
-  }
-  model;
-  detail;
-};
 var QuotaError = class extends Error {
   constructor(model, info) {
     const who = model ?? "agy's default model";
@@ -229,7 +187,7 @@ var SESSIONS_FILE = path.join(
   "last_conversations.json"
 );
 var execWithClosedStdin = (file, args, options) => {
-  const promise = execFileAsync(file, args, { ...options, windowsHide: true });
+  const promise = execFileAsync(file, args, options);
   promise.child.stdin?.end();
   return promise;
 };
@@ -261,9 +219,7 @@ function spawnDetached(file, args, cwd, stdinData) {
     child.on("exit", (code) => {
       exited = true;
       exitCode = code;
-      // PATCH-TRANSIENT-RETRY-20260830: a large stdout can still be draining when "exit" fires;
-      // 2s truncated it into a spurious empty result. Wait longer for "close".
-      closeFallback = setTimeout(() => resolve({ code: exitCode }), 15e3);
+      closeFallback = setTimeout(() => resolve({ code: exitCode }), 2e3);
       closeFallback.unref();
     });
     child.on("close", (code) => {
@@ -462,18 +418,14 @@ async function runAgy(req, cfg, deps = defaultDeps) {
         const detail = parsed.error || "agy reported an error with no detail.";
         const quota = detectQuota(detail) ?? detectQuota(await deps.readLog(logPath));
         finish(
-          () => reject(
-            quota ? new QuotaError(req.model, quota) : isTransient(detail) ? new TransientError(req.model, detail) : new Error(describeFailure(detail, timeoutSec))
-          )
+          () => reject(quota ? new QuotaError(req.model, quota) : new Error(`agy failed: ${detail}`))
         );
         return;
       }
       if (code !== 0) {
         const stderr = child.stderr().trim();
         finish(
-          () => reject(
-            isTransient(stderr) ? new TransientError(req.model, stderr) : new Error(stderr ? describeFailure(stderr, timeoutSec) : `agy exited with code ${code}.`)
-          )
+          () => reject(new Error(stderr ? `agy failed: ${stderr}` : `agy exited with code ${code}.`))
         );
         return;
       }
@@ -481,9 +433,8 @@ async function runAgy(req, cfg, deps = defaultDeps) {
         const quota = detectQuota(await deps.readLog(logPath));
         finish(
           () => reject(
-            quota ? new QuotaError(req.model, quota) : new TransientError(
-              req.model,
-              "agy returned empty output (no result line on stdout)"
+            quota ? new QuotaError(req.model, quota) : new Error(
+              "agy returned empty output (likely hit its print-timeout without a response)."
             )
           )
         );
@@ -534,7 +485,7 @@ var TOOLS = [
       question: z.string().describe("What you want to know about these files."),
       ...commonShape
     },
-    chain: ["gemini-3.8-flash-high", "gemini-3.7-flash-high", "gemini-3.6-flash-high"],
+    chain: ["gemini-3.7-flash-high", "gemini-3.6-flash-high", "gemini-3.1-pro-low"],
     timeoutSec: 300,
     buildPrompt(args, cwd) {
       const files = resolveFiles(args.files, cwd);
@@ -553,7 +504,7 @@ ${OUTPUT_RULES}`;
       query: z.string().describe("What to find, e.g. 'when was the auth middleware refactored and why'."),
       ...commonShape
     },
-    chain: ["gemini-3.8-flash-medium", "gemini-3.7-flash-medium", "gemini-3.7-flash-high"],
+    chain: ["gemini-3.7-flash-medium", "gemini-3.7-flash-high", "gemini-3.6-flash-medium"],
     timeoutSec: 180,
     buildPrompt(args) {
       return `Search this repository to answer the following. Use git log, git diff, git blame, and grep as needed.
@@ -570,12 +521,8 @@ Report findings with commit hashes where relevant. ${OUTPUT_RULES}`;
       query: z.string().describe("What to look up on the web."),
       ...commonShape
     },
-    chain: ["gemini-3.8-flash-medium", "gemini-3.7-flash-medium", "gemini-3.7-flash-high"],
-    // PATCH-WEBLOOKUP-TIMEOUT-20260905: was 120 -- the lowest of any tool, and it is passed
-    // straight to agy as --print-timeout. A grounded lookup that fetches several pages
-    // routinely runs past 2min, so agy self-aborted with "timeout waiting for response"
-    // on most real queries. 300 matches agy's own --print-timeout default (5m).
-    timeoutSec: 300,
+    chain: ["gemini-3.7-flash-medium", "gemini-3.7-flash-high", "gemini-3.6-flash-medium"],
+    timeoutSec: 120,
     buildPrompt(args) {
       return `Look up on the web: ${args.query}
 
@@ -591,7 +538,7 @@ Include source URLs for key claims. ${OUTPUT_RULES}`;
       focus: z.string().optional().describe("Optional focus area, e.g. 'security', 'concurrency'."),
       ...commonShape
     },
-    chain: ["gemini-3.8-flash-high", "gemini-3.7-flash-high", "claude-opus-4-6-thinking"],  // ROUTING-20260830: flash-high measured level with pro on adversarial review and 2.1x faster
+    chain: ["gemini-3.1-pro-high", "claude-opus-4-6-thinking", "gemini-3.7-flash-high"],
     timeoutSec: 300,
     buildPrompt(args, cwd) {
       const files = args.files;
@@ -633,7 +580,7 @@ Rank findings by severity (critical/major/minor) and justify each. Do not pad wi
       prompt: z.string().describe("The complete task prompt for agy."),
       ...commonShape
     },
-    chain: ["gemini-3.8-flash-high", "gemini-3.7-flash-high", "gemini-3.6-flash-high"],
+    chain: ["gemini-3.7-flash-high", "gemini-3.6-flash-high"],
     timeoutSec: 600,
     buildPrompt(args) {
       return args.prompt;
@@ -945,55 +892,35 @@ async function runWithFailover(req, cfg, registry, cooldowns, deps = defaultDeps
       attempts.push(`${model}: quota cooldown, ${cooldowns.describe(model)} left`);
       continue;
     }
-    // PATCH-TRANSIENT-RETRY-20260830: retry the same model on a transient failure before moving
-    // down the chain. Previously any non-quota error was rethrown on the first attempt.
-    const maxRetries = cfg.retries ?? 2;
-    let advanceToNextModel = false;
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        result = await runAgy(
-          {
-            prompt: req.prompt,
-            cwd: req.cwd,
-            model,
-            conversationId: req.conversationId,
-            timeoutSec: req.timeoutSec,
-            signal: req.signal
-          },
-          cfg,
-          deps
+    try {
+      result = await runAgy(
+        {
+          prompt: req.prompt,
+          cwd: req.cwd,
+          model,
+          conversationId: req.conversationId,
+          timeoutSec: req.timeoutSec,
+          signal: req.signal
+        },
+        cfg,
+        deps
+      );
+      used = model;
+      break;
+    } catch (err) {
+      if (err instanceof QuotaError && model) {
+        cooldowns.set(model, err.resetSeconds);
+        attempts.push(
+          `${model}: quota exhausted${err.resetText ? ` (resets in ${err.resetText})` : ""}`
         );
-        used = model;
-        break;
-      } catch (err) {
-        if (err instanceof QuotaError && model) {
-          cooldowns.set(model, err.resetSeconds);
-          attempts.push(
-            `${model}: quota exhausted${err.resetText ? ` (resets in ${err.resetText})` : ""}`
-          );
-          advanceToNextModel = true;
-          break;
-        }
-        if (err instanceof TransientError) {
-          const label = model ?? "agy default";
-          if (attempt < maxRetries) {
-            attempts.push(`${label}: transient (${err.detail}) - retrying ${attempt + 1}/${maxRetries}`);
-            await new Promise((r) => setTimeout(r, 1500 * Math.pow(2, attempt)));
-            continue;
-          }
-          attempts.push(`${label}: transient after ${maxRetries + 1} attempts (${err.detail})`);
-          advanceToNextModel = true;
-          break;
-        }
-        throw err;
+        continue;
       }
+      throw err;
     }
-    if (result) break;
-    if (advanceToNextModel) continue;
   }
   if (!result) {
     throw new Error(
-      `agy produced no result. Attempts:
+      `All candidate models are quota-exhausted or cooling down:
 ${attempts.map((a) => `- ${a}`).join("\n")}
 Retry after the quota resets, or pass an explicit \`model\`.`
     );

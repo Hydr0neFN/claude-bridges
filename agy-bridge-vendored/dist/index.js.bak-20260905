@@ -99,13 +99,11 @@ ${available.join("\n")}`
     if (available === null) {
       return { models: [void 0], note: "could not list agy models; using agy's own default model" };
     }
-    const chainModels = opts.chain.map((m) => canonicalize(m, available)).filter((m) => m !== void 0);
+    const models = opts.chain.map((m) => canonicalize(m, available)).filter((m) => m !== void 0);
     const defaultCanonical = opts.defaultModel ? canonicalize(opts.defaultModel, available) : void 0;
-    // PATCH-DEFAULT-FIRST-20260912: AGY_DEFAULT_MODEL is the operator's current-tier
-    // choice; it must be tried BEFORE a hardcoded chain (e.g. ASYNC_CHAIN) that goes
-    // stale whenever a new model tier ships. Previously the default was appended last,
-    // so every no-explicit-model call silently ran the stale chain's first entry.
-    const models = defaultCanonical ? [defaultCanonical, ...chainModels.filter((m) => m !== defaultCanonical)] : chainModels;
+    if (defaultCanonical && !models.includes(defaultCanonical)) {
+      models.push(defaultCanonical);
+    }
     if (models.length === 0) {
       return { models: [void 0], note: "no preferred model available; using agy's own default model" };
     }
@@ -163,14 +161,6 @@ var TOOLARG_RE = /invalid arguments/i;
 var TOOLARG_POINTER_RE = /at '\/[A-Za-z0-9_]+'/;
 function isModelToolArgError(text) {
   return typeof text === "string" && TOOLARG_RE.test(text) && TOOLARG_POINTER_RE.test(text);
-}
-// PATCH-PRINTTIMEOUT-20260905: when agy's own --print-timeout (which the bridge sets from
-// timeoutSec) expires, agy exits non-zero with the opaque stderr "timeout waiting for
-// response". Echoed verbatim it looks like a network fault, so the real cause -- our own
-// timeout budget being too small -- stayed invisible. Rewrite it to name the knob.
-var PRINT_TIMEOUT_RE = /timeout waiting for response/i;
-function describeFailure(detail, timeoutSec) {
-  return PRINT_TIMEOUT_RE.test(detail) ? `agy hit its own --print-timeout of ${timeoutSec}s waiting for the model. Raise this tool's timeoutSec (or AGY_TIMEOUT) if the query legitimately needs longer.` : `agy failed: ${detail}`;
 }
 function isTransient(text) {
   if (typeof text !== "string" || text.length === 0) return false;
@@ -463,7 +453,7 @@ async function runAgy(req, cfg, deps = defaultDeps) {
         const quota = detectQuota(detail) ?? detectQuota(await deps.readLog(logPath));
         finish(
           () => reject(
-            quota ? new QuotaError(req.model, quota) : isTransient(detail) ? new TransientError(req.model, detail) : new Error(describeFailure(detail, timeoutSec))
+            quota ? new QuotaError(req.model, quota) : isTransient(detail) ? new TransientError(req.model, detail) : new Error(`agy failed: ${detail}`)
           )
         );
         return;
@@ -472,7 +462,7 @@ async function runAgy(req, cfg, deps = defaultDeps) {
         const stderr = child.stderr().trim();
         finish(
           () => reject(
-            isTransient(stderr) ? new TransientError(req.model, stderr) : new Error(stderr ? describeFailure(stderr, timeoutSec) : `agy exited with code ${code}.`)
+            isTransient(stderr) ? new TransientError(req.model, stderr) : new Error(stderr ? `agy failed: ${stderr}` : `agy exited with code ${code}.`)
           )
         );
         return;
@@ -571,11 +561,7 @@ Report findings with commit hashes where relevant. ${OUTPUT_RULES}`;
       ...commonShape
     },
     chain: ["gemini-3.8-flash-medium", "gemini-3.7-flash-medium", "gemini-3.7-flash-high"],
-    // PATCH-WEBLOOKUP-TIMEOUT-20260905: was 120 -- the lowest of any tool, and it is passed
-    // straight to agy as --print-timeout. A grounded lookup that fetches several pages
-    // routinely runs past 2min, so agy self-aborted with "timeout waiting for response"
-    // on most real queries. 300 matches agy's own --print-timeout default (5m).
-    timeoutSec: 300,
+    timeoutSec: 120,
     buildPrompt(args) {
       return `Look up on the web: ${args.query}
 
