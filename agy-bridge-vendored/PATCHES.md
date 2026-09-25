@@ -421,3 +421,15 @@ before the edit. Takes effect only after the MCP server restarts (see "Verifying
 calling session's side — its MCP client is serializing the `model` argument into the prompt
 string instead of as a sibling key. Flagged back to that session; not reproducible or fixable
 from inside this bridge.
+
+## 7. Gemini 3.6 Flash dropped from every chain (2026-09-25)
+
+Chains now use only the 3.8 / 3.7 flash tiers:
+
+- `analyze_files` and `delegate`: `gemini-3.8-flash-high` → `gemini-3.7-flash-high` (3.6 tail removed).
+- `ASYNC_CHAIN`: was `gemini-3.7-flash-high` → `gemini-3.6-flash-high`, stale since 3.8 shipped;
+  now `gemini-3.8-flash-high` → `gemini-3.7-flash-high`.
+- `deep_search`, `web_lookup` and `adversarial_review` were already on 3.8 / 3.7 and are unchanged.
+
+`AGY_DEFAULT_MODEL` still goes first (§6), so the chain is only a fallback. `scripts/verify-chains.mjs`
+passes. The change takes effect when the MCP server restarts.

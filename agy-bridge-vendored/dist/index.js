@@ -534,7 +534,7 @@ var TOOLS = [
       question: z.string().describe("What you want to know about these files."),
       ...commonShape
     },
-    chain: ["gemini-3.8-flash-high", "gemini-3.7-flash-high", "gemini-3.6-flash-high"],
+    chain: ["gemini-3.8-flash-high", "gemini-3.7-flash-high"],
     timeoutSec: 300,
     buildPrompt(args, cwd) {
       const files = resolveFiles(args.files, cwd);
@@ -633,7 +633,7 @@ Rank findings by severity (critical/major/minor) and justify each. Do not pad wi
       prompt: z.string().describe("The complete task prompt for agy."),
       ...commonShape
     },
-    chain: ["gemini-3.8-flash-high", "gemini-3.7-flash-high", "gemini-3.6-flash-high"],
+    chain: ["gemini-3.8-flash-high", "gemini-3.7-flash-high"],
     timeoutSec: 600,
     buildPrompt(args) {
       return args.prompt;
@@ -650,7 +650,7 @@ var SELF_PATH = fileURLToPath(import.meta.url);
 var JOBS_ROOT = path.join(homedir(), ".claude-bridges", "agy-jobs");
 var JOB_LIMIT = 50;
 var FINISHED = ["done", "error", "cancelled"];
-var ASYNC_CHAIN = ["gemini-3.7-flash-high", "gemini-3.6-flash-high"];
+var ASYNC_CHAIN = ["gemini-3.8-flash-high", "gemini-3.7-flash-high"];
 function workspaceDir(cwd) {
   return path.join(JOBS_ROOT, createHash("sha1").update(path.resolve(cwd)).digest("hex").slice(0, 12));
 }
