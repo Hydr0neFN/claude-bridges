@@ -9,6 +9,7 @@
 import { z } from "zod";
 import { startServer, truncate, positiveInt, okText, errText } from "../lib/common.js";
 import { ENGINES } from "../lib/engines.js";
+import { runPanel } from "../lib/panel.js";
 import { parseOrder } from "../lib/args.js";
 import { checkUpdates, formatFooter } from "../lib/updates.js";
 
@@ -87,7 +88,7 @@ startServer("consult-bridge", "0.1.0", (server) => {
       }
 
       // Panel mode: fan out in parallel, aggregate every success.
-      const results = await Promise.all(order.map(run));
+      const results = await runPanel({ order, run }); // each engine has its own timeout
       const good = results.filter((r) => r.ok);
       const failed = results.filter((r) => !r.ok).map((r) => `${r.engine}: ${r.reason}`);
 

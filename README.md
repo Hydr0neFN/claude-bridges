@@ -110,9 +110,12 @@ Delegate to OpenAI Codex CLI via `codex exec`. Sandboxed read-only by default. P
 ```bash
 node consult-cli.js --mode all --order copilot,codex "prompt"
 node consult-cli.js --copilot-model M --copilot-effort high --codex-model M --codex-effort low "prompt"
+node consult-cli.js --out-dir /tmp/c "prompt"   # also write <dir>/<engine>.md as each engine settles, <dir>/_done at the end
 node consult-cli.js --check-updates   # force a check now, print the result, exit
 node consult-cli.js --update          # brew upgrade --cask <outdated CLIs>; git pull --ff-only (refuses on a dirty repo)
 ```
+
+In `--mode all`, `consult-cli` prints each engine's whole `## <engine>` section (answer or `[failed] reason`) the moment it settles, in completion order, then the `[consult] mode: all | ...` summary last. Per-engine timeouts are independent, so a slow engine never delays the others. `consult-bridge` returns one aggregated result but uses the same runner (`lib/panel.js`).
 
 On start, both `consult-cli` and `consult-bridge` check (at most once per 24h, cache in `~/.cache/claude-bridges/updates.json`) whether the engine CLIs (`brew outdated --cask` for brew-installed casks; `copilot version` otherwise) or this repo (`git fetch`, behind-count) are outdated. The check runs concurrently, never delays or fails a consult, and prints one footer line only when something is outdated (in the tool result for the MCP server). Nothing is installed without `--update`.
 

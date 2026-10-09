@@ -151,3 +151,73 @@ test("applyUpdates: refuses on dirty repo, upgrades casks, ff-only pull when cle
   assert.ok(log.includes("git -C /r pull --ff-only"));
   assert.ok(clean.some((l) => /pull --ff-only done/.test(l)));
 });
+
+import { runPanel, formatSection, summaryLine, writeEngineResult, writeDone } from "../lib/panel.js";
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const fake = (delays) => async (name) => {
+  await sleep(delays[name][0]);
+  return delays[name][1] ? { engine: name, ok: true, body: `${name} body` } : { engine: name, ok: false, reason: "quota" };
+};
+
+test("runPanel: onSettle fires in completion order, results keep input order", async () => {
+  const seen = [];
+  const results = await runPanel({
+    order: ["slow", "mid", "fast"],
+    run: fake({ slow: [60, true], mid: [30, false], fast: [5, true] }),
+    onSettle: (n) => seen.push(n),
+  });
+  assert.deepEqual(seen, ["fast", "mid", "slow"]);
+  assert.deepEqual(results.map((r) => r.engine), ["slow", "mid", "fast"]);
+});
+
+test("runPanel: a hung engine does not delay the others' output", async () => {
+  const t0 = Date.now();
+  const at = {};
+  const p = runPanel({
+    order: ["hung", "fast"],
+    run: (n) => (n === "hung" ? sleep(150).then(() => ({ engine: n, ok: false, reason: "timed out after 0.15s" })) : fake({ fast: [5, true] })(n)),
+    onSettle: (n) => (at[n] = Date.now() - t0),
+  });
+  await p;
+  assert.ok(at.fast < 100 && at.hung >= 140, JSON.stringify(at));
+});
+
+test("runPanel: crashing engine and failing sink are contained", async () => {
+  const r = await runPanel({
+    order: ["a", "b"],
+    run: async (n) => { if (n === "a") throw new Error("x"); return { engine: n, ok: true, body: "ok" }; },
+    onSettle: () => { throw new Error("sink"); },
+  });
+  assert.match(r[0].reason, /^crashed: x/);
+  assert.equal(r[1].ok, true);
+});
+
+test("sections and summary formatting", () => {
+  const ok = { engine: "codex", ok: true, body: "hi" };
+  const bad = { engine: "agy", ok: false, reason: "timed out after 5s" };
+  assert.equal(formatSection(ok), "## codex\n\nhi\n");
+  assert.equal(formatSection(bad), "## agy\n\n[failed] timed out after 5s\n");
+  assert.equal(summaryLine([ok, bad]), "[consult] mode: all | answered: codex | failed: agy: timed out after 5s");
+  assert.equal(summaryLine([bad]), null);
+});
+
+test("out-dir: engine files appear as each settles, _done only at the end", async () => {
+  const dir = path.join(tmp(), "out");
+  const snaps = [];
+  const results = await runPanel({
+    order: ["slow", "fast"],
+    run: fake({ slow: [50, true], fast: [5, true] }),
+    onSettle: (n, r) => { writeEngineResult(dir, n, r); snaps.push(fs.readdirSync(dir).sort()); },
+  });
+  assert.deepEqual(snaps[0], ["fast.md"]);
+  assert.deepEqual(snaps[1], ["fast.md", "slow.md"]);
+  assert.ok(!fs.existsSync(path.join(dir, "_done")));
+  writeDone(dir, summaryLine(results));
+  assert.match(fs.readFileSync(path.join(dir, "_done"), "utf8"), /answered: slow, fast/);
+  assert.equal(fs.readFileSync(path.join(dir, "fast.md"), "utf8"), "## fast\n\nfast body\n");
+});
+
+test("parseArgs: --out-dir", () => {
+  assert.equal(parseArgs(["--out-dir", "/o", "p"]).outDir, "/o");
+});

@@ -110,9 +110,12 @@ consult({
 ```bash
 node consult-cli.js --mode all --order copilot,codex "prompt"
 node consult-cli.js --copilot-model M --copilot-effort high --codex-model M --codex-effort low "prompt"
+node consult-cli.js --out-dir /tmp/c "prompt"   # 每個引擎完成時即寫入 <dir>/<engine>.md，全部完成後寫入 <dir>/_done
 node consult-cli.js --check-updates   # 立即檢查、印出結果後結束
 node consult-cli.js --update          # brew upgrade --cask <過期的 CLI>；git pull --ff-only（工作樹有未提交變更時拒絕）
 ```
+
+`--mode all` 時，`consult-cli` 會在每個引擎完成的當下依完成順序印出該引擎完整的 `## <engine>` 區段（回答或 `[failed] 原因`），最後才印 `[consult] mode: all | ...` 摘要行。各引擎逾時彼此獨立，慢的引擎不會拖延其他引擎。`consult-bridge` 仍回傳單一彙整結果，但使用相同的執行器（`lib/panel.js`）。
 
 `consult-cli` 與 `consult-bridge` 啟動時會檢查（每 24 小時至多一次，快取於 `~/.cache/claude-bridges/updates.json`）引擎 CLI（brew 安裝的 cask 用 `brew outdated --cask`，否則用 `copilot version`）與本儲存庫（`git fetch` 後比對落後 commit 數）是否過期。檢查與諮詢並行，不會拖慢或使諮詢失敗；僅在有過期項目時印出一行頁尾（MCP 伺服器則放在工具結果內）。未加 `--update` 不會安裝任何東西。
 
