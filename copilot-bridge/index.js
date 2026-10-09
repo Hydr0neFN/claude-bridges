@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// LEGACY: superseded by consult-bridge / consult-cli and not registered by default.
+// Kept working; binary resolution is shared with them via lib/common.js.
 // copilot-bridge: wraps headless `copilot -p "<prompt>"` with restrictive tool
 // permissions and returns Copilot's stdout. Modeled on the agy-bridge pattern.
 

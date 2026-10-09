@@ -53,8 +53,12 @@ claude-bridges/
   package.json            shared deps (@modelcontextprotocol/sdk, zod)
   node_modules/           one install serves all bridges
   lib/
-    common.js             shared MCP boilerplate, CLI runner, exe resolution
-    engines.js            slim engine runners for consult-bridge's chain
+    common.js             shared MCP boilerplate, CLI runner, cross-platform exe resolution
+    engines.js            engine runners shared by consult-bridge and consult-cli
+    args.js               consult-cli argument parsing
+    updates.js            throttled update check + --update
+  consult-cli.js          same panel as a plain command (no MCP schema cost)
+  test/                   node --test suite (npm test)
   copilot-bridge/
     index.js              standalone MCP server → copilot_exec tool
   codex-bridge/
@@ -64,7 +68,7 @@ claude-bridges/
   agy-bridge-vendored/    vendored copy of the agy-bridge (Gemini)
 ```
 
-三個獨立的 MCP 伺服器，各自可單獨使用或透過 `consult` 聚合器使用：
+三個 MCP 伺服器；實際使用的是 `consult-bridge`，另外兩個為**舊版（legacy）**（仍可運作，但預設不註冊）：
 
 | Bridge | 工具 | 預設策略 |
 |---|---|---|
@@ -72,7 +76,7 @@ claude-bridges/
 | `codex-bridge` | `codex_exec` | 沙盒化 `read-only` |
 | `consult-bridge` | `consult` | 聚合器：平行執行所有引擎（`mode: all`）或循序後備切換（`mode: first`） |
 
-`consult-bridge` 特意**沒有**重複使用各個獨立 bridge 的程式碼路徑 —— `lib/engines.js` 複製了約 30 行的引數建構邏輯，以確保已測試過的單一 bridge 承擔零重構風險。
+三者皆透過 `lib/common.js` 解析 CLI 執行檔（PATH，加上 macOS/Linux 的 `/opt/homebrew/bin`、`/usr/local/bin`、`~/.local/bin`；Windows AppData 後備路徑僅在 Windows 使用）。`consult-bridge` 與 `consult-cli` 在 `lib/engines.js` 自行建構引數。缺少某個 CLI 只會讓該引擎失敗，例如 `copilot: not installed (looked in ...)`。
 
 ## 工具
 
@@ -100,6 +104,17 @@ consult({
 ### `codex_exec`
 
 透過 `codex exec` 委派給 OpenAI Codex CLI。預設為沙盒化唯讀。只有當你確實打算讓 Codex 編輯檔案時，才傳入 `sandbox: "workspace-write"`。
+
+## 命令列與更新
+
+```bash
+node consult-cli.js --mode all --order copilot,codex "prompt"
+node consult-cli.js --copilot-model M --copilot-effort high --codex-model M --codex-effort low "prompt"
+node consult-cli.js --check-updates   # 立即檢查、印出結果後結束
+node consult-cli.js --update          # brew upgrade --cask <過期的 CLI>；git pull --ff-only（工作樹有未提交變更時拒絕）
+```
+
+`consult-cli` 與 `consult-bridge` 啟動時會檢查（每 24 小時至多一次，快取於 `~/.cache/claude-bridges/updates.json`）引擎 CLI（brew 安裝的 cask 用 `brew outdated --cask`，否則用 `copilot version`）與本儲存庫（`git fetch` 後比對落後 commit 數）是否過期。檢查與諮詢並行，不會拖慢或使諮詢失敗；僅在有過期項目時印出一行頁尾（MCP 伺服器則放在工具結果內）。未加 `--update` 不會安裝任何東西。
 
 ## 安裝
 
@@ -137,6 +152,8 @@ codex login      # OpenAI Codex CLI
 | `*_MODEL` | （引擎預設） | 覆寫所使用的模型 |
 | `*_BIN` | （自動解析） | 覆寫 CLI 執行檔路徑 |
 
+consult 小組的覆寫變數：`COPILOT_BRIDGE_BIN`、`CODEX_BRIDGE_BIN`、`AGY_PATH`、`GROK_PATH`。
+
 ### copilot-bridge
 
 | 變數 | 預設值 | 說明 |
@@ -158,6 +175,12 @@ codex login      # OpenAI Codex CLI
 | `CONSULT_PER_ENGINE_CHARS` | `20000` | `all` 模式下各引擎截斷字數 |
 | `CONSULT_ORDER` | `copilot,codex,agy` | 預設引擎順序 |
 | `CONSULT_MODE` | `all` | 預設模式（`all` 或 `first`） |
+| `COPILOT_MODEL` | （未設 = auto） | 僅在設定時以 `--model` 傳入。若 Copilot 拒絕（如 Student 方案僅支援 auto），會改用 auto 重試一次並標示為 `copilot (auto; <model> unavailable on this plan)` |
+| `COPILOT_EFFORT` | （未設） | `--reasoning-effort none\|minimal\|low\|medium\|high\|xhigh\|max` |
+| `CODEX_MODEL` | （未設） | 僅在設定時以 `-m` 傳入 |
+| `CODEX_EFFORT` | （未設） | 以 `-c model_reasoning_effort="..."` 傳入 |
+| `CLAUDE_BRIDGES_CACHE_DIR` | `~/.cache/claude-bridges` | 更新檢查的快取位置 |
+| `CLAUDE_BRIDGES_UPDATE_WAIT_MS` | `4000` | 僅 CLI：結束前等待即時更新檢查的最長時間（逾時則使用快取結果） |
 | `DEEPSEEKER_BASE` | `http://127.0.0.1:4000` | deeperseeker proxy 的 base URL |
 | `DEEPSEEKER_MODEL` | `v4.1flash` | 傳給 proxy 的 model id |
 | `DEEPSEEKER_API_KEY` | （從 proxy `.env` 讀取） | Proxy API key，未設時回退至 `DEEPSEEKER_ENV_PATH` |

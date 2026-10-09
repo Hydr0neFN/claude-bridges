@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// LEGACY: superseded by consult-bridge / consult-cli and not registered by default.
+// Kept working; binary resolution is shared with them via lib/common.js.
 // codex-bridge: wraps `codex exec "<prompt>"` (sandboxed read-only by default) and
 // returns Codex's final message. Modeled on the agy-bridge pattern.
 

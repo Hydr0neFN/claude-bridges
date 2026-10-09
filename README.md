@@ -53,8 +53,12 @@ claude-bridges/
   package.json            shared deps (@modelcontextprotocol/sdk, zod)
   node_modules/           one install serves all bridges
   lib/
-    common.js             shared MCP boilerplate, CLI runner, exe resolution
-    engines.js            slim engine runners for consult-bridge's chain
+    common.js             shared MCP boilerplate, CLI runner, cross-platform exe resolution
+    engines.js            engine runners shared by consult-bridge and consult-cli
+    args.js               consult-cli argument parsing
+    updates.js            throttled update check + --update
+  consult-cli.js          same panel as a plain command (no MCP schema cost)
+  test/                   node --test suite (npm test)
   copilot-bridge/
     index.js              standalone MCP server → copilot_exec tool
   codex-bridge/
@@ -64,7 +68,7 @@ claude-bridges/
   agy-bridge-vendored/    vendored copy of the agy-bridge (Gemini)
 ```
 
-Three independent MCP servers, each usable standalone or through the `consult` aggregator:
+Three MCP servers; `consult-bridge` is the one in active use, the other two are **legacy** (kept working, not registered by default):
 
 | Bridge | Tool | Default Posture |
 |---|---|---|
@@ -72,7 +76,7 @@ Three independent MCP servers, each usable standalone or through the `consult` a
 | `codex-bridge` | `codex_exec` | Sandboxed `read-only` |
 | `consult-bridge` | `consult` | Aggregator: runs engines in parallel (`mode: all`) or sequential fallback (`mode: first`) |
 
-`consult-bridge` deliberately does NOT reuse the individual bridges' code paths — `lib/engines.js` duplicates ~30 lines of arg-building so the tested single bridges carry zero refactor risk.
+All three resolve CLI binaries through `lib/common.js` (PATH plus `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin` on macOS/Linux; Windows AppData fallbacks only on Windows). `consult-bridge` and `consult-cli` build their own arguments in `lib/engines.js`. A missing CLI fails only its own engine, e.g. `copilot: not installed (looked in ...)`.
 
 ## Tools
 
@@ -100,6 +104,17 @@ Delegate to GitHub Copilot CLI, headless and non-interactive. Read-only by defau
 ### `codex_exec`
 
 Delegate to OpenAI Codex CLI via `codex exec`. Sandboxed read-only by default. Pass `sandbox: "workspace-write"` only when you actually intend Codex to edit files.
+
+## Command line and updates
+
+```bash
+node consult-cli.js --mode all --order copilot,codex "prompt"
+node consult-cli.js --copilot-model M --copilot-effort high --codex-model M --codex-effort low "prompt"
+node consult-cli.js --check-updates   # force a check now, print the result, exit
+node consult-cli.js --update          # brew upgrade --cask <outdated CLIs>; git pull --ff-only (refuses on a dirty repo)
+```
+
+On start, both `consult-cli` and `consult-bridge` check (at most once per 24h, cache in `~/.cache/claude-bridges/updates.json`) whether the engine CLIs (`brew outdated --cask` for brew-installed casks; `copilot version` otherwise) or this repo (`git fetch`, behind-count) are outdated. The check runs concurrently, never delays or fails a consult, and prints one footer line only when something is outdated (in the tool result for the MCP server). Nothing is installed without `--update`.
 
 ## Install
 
@@ -137,6 +152,8 @@ codex login      # OpenAI Codex CLI
 | `*_MODEL` | (engine default) | Override the model |
 | `*_BIN` | (auto-resolved) | Override the CLI executable path |
 
+Overrides for the consult panel: `COPILOT_BRIDGE_BIN`, `CODEX_BRIDGE_BIN`, `AGY_PATH`, `GROK_PATH`.
+
 ### copilot-bridge
 
 | Variable | Default | Description |
@@ -158,6 +175,12 @@ codex login      # OpenAI Codex CLI
 | `CONSULT_PER_ENGINE_CHARS` | `20000` | Per-engine truncation in `all` mode |
 | `CONSULT_ORDER` | `copilot,codex,agy` | Default engine order |
 | `CONSULT_MODE` | `all` | Default mode (`all` or `first`) |
+| `COPILOT_MODEL` | (unset = auto) | Passed as `--model` only when set. If Copilot rejects it (auto-only plans such as Student), retried once on auto and labelled `copilot (auto; <model> unavailable on this plan)` |
+| `COPILOT_EFFORT` | (unset) | `--reasoning-effort none\|minimal\|low\|medium\|high\|xhigh\|max` |
+| `CODEX_MODEL` | (unset) | Passed as `-m` only when set |
+| `CODEX_EFFORT` | (unset) | Passed as `-c model_reasoning_effort="..."` |
+| `CLAUDE_BRIDGES_CACHE_DIR` | `~/.cache/claude-bridges` | Update-check cache location |
+| `CLAUDE_BRIDGES_UPDATE_WAIT_MS` | `4000` | CLI only: max wait for a live update check before exiting (cached result is used otherwise) |
 | `DEEPSEEKER_BASE` | `http://127.0.0.1:4000` | deeperseeker proxy base URL |
 | `DEEPSEEKER_MODEL` | `v4.1flash` | Model id passed to the proxy |
 | `DEEPSEEKER_API_KEY` | (read from proxy `.env`) | Proxy API key; falls back to `DEEPSEEKER_ENV_PATH` |
