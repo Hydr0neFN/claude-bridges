@@ -7,7 +7,7 @@ import { parseArgs, parseOrder } from "../lib/args.js";
 import { resolveCopilot, resolveCodex, resolveAgy, findBinary, searchDirs, NotInstalledError } from "../lib/common.js";
 import { copilotRejectedModel, copilotArgs, codexArgs, launchFailure } from "../lib/engines.js";
 import {
-  checkUpdates, formatFooter, isFresh, caskToken, parseBrewOutdated, applyUpdates, CACHE_TTL_MS, readCache,
+  checkUpdates, collectUpdates, formatFooter, GIT_ENV, REPO_DIR, isFresh, caskToken, parseBrewOutdated, applyUpdates, CACHE_TTL_MS, readCache,
 } from "../lib/updates.js";
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "cb-test-"));
@@ -82,7 +82,7 @@ test("model/effort flags only passed when set", () => {
   const x = codexArgs({ prompt: "p", cwd: "/w", outFile: "/o" });
   assert.ok(!x.includes("-m") && !x.includes("-c"));
   const x2 = codexArgs({ prompt: "p", cwd: "/w", outFile: "/o", model: "gpt", effort: "low" });
-  assert.deepEqual(x2.slice(-4), ["-m", "gpt", "-c", 'model_reasoning_effort="low"']);
+  assert.deepEqual(x2.slice(-4), ["-m", "gpt", "-c", 'model_reasoning_effort=low']);
 });
 
 test("footer formatting: silent when current, one line when outdated", () => {
@@ -143,11 +143,13 @@ test("applyUpdates: refuses on dirty repo, upgrades casks, ff-only pull when cle
     return { code: 0, stdout: args.includes("--porcelain") && dirty ? " M file" : "", stderr: "" };
   };
   const items = [{ kind: "cli", name: "codex", token: "codex" }, { kind: "repo", name: "claude-bridges", behind: 1 }];
-  const dirty = await applyUpdates({ items, run: mk(true), repoDir: "/r" });
+  const { log: dirty, failed: dirtyFailed } = await applyUpdates({ items, run: mk(true), repoDir: "/r" });
+  assert.equal(dirtyFailed, true);
   assert.ok(dirty.some((l) => /refusing to pull/.test(l)));
   assert.ok(!log.some((l) => l.includes("pull")));
   assert.ok(log.includes("brew upgrade --cask codex"));
-  const clean = await applyUpdates({ items, run: mk(false), repoDir: "/r" });
+  const { log: clean, failed: cleanFailed } = await applyUpdates({ items, run: mk(false), repoDir: "/r" });
+  assert.equal(cleanFailed, false);
   assert.ok(log.includes("git -C /r pull --ff-only"));
   assert.ok(clean.some((l) => /pull --ff-only done/.test(l)));
 });
@@ -220,4 +222,44 @@ test("out-dir: engine files appear as each settles, _done only at the end", asyn
 
 test("parseArgs: --out-dir", () => {
   assert.equal(parseArgs(["--out-dir", "/o", "p"]).outDir, "/o");
+});
+
+test("parseArgs: Object.prototype names are prompt words, not flags", () => {
+  assert.deepEqual(parseArgs(["fix", "toString", "in", "constructor", "class", "__proto__", "hasOwnProperty"]).prompt,
+    ["fix", "toString", "in", "constructor", "class", "__proto__", "hasOwnProperty"]);
+});
+
+test("collectUpdates: brew outdated uses --greedy (auto_updates casks) and git gets non-interactive env", async () => {
+  const calls = [];
+  const run = async (o) => {
+    calls.push(o);
+    if (o.cmd === "brew") return { code: 0, stderr: "", stdout: JSON.stringify({ casks: [{ name: "copilot-cli", installed_versions: ["1.0.94"], current_version: "1.1.0" }] }) };
+    return { code: 0, stdout: "0", stderr: "" };
+  };
+  const items = await collectUpdates({
+    run,
+    repoDir: "/r",
+    resolvers: { copilot: () => ({ cmd: "/opt/homebrew/bin/copilot", pre: [] }) },
+    realpath: () => "/opt/homebrew/Caskroom/copilot-cli/1.0.94/copilot",
+  });
+  assert.deepEqual(items, [{ kind: "cli", name: "copilot", token: "copilot-cli", current: "1.0.94", latest: "1.1.0" }]);
+  assert.ok(calls.find((c) => c.cmd === "brew").args.includes("--greedy"));
+  assert.deepEqual(calls.find((c) => c.args.includes("fetch")).env, GIT_ENV);
+});
+
+test("checkUpdates detach: stale cache -> detached refresh, cached items returned, nothing awaited", () => {
+  const file = path.join(tmp(), "u.json");
+  fs.writeFileSync(file, JSON.stringify({ checkedAt: 1, items: [{ kind: "repo", name: "claude-bridges", behind: 1 }] }));
+  let spawned = null;
+  const r = checkUpdates({ file, now: CACHE_TTL_MS * 3, detach: (f) => (spawned = f), collect: () => assert.fail("must not collect in-process") });
+  assert.equal(spawned, file);
+  assert.equal(r.items.length, 1);
+  // fresh cache: no refresh
+  spawned = null;
+  checkUpdates({ file, now: CACHE_TTL_MS * 3 + 5, detach: (f) => (spawned = f) });
+  assert.equal(spawned, null);
+});
+
+test("footer command is an absolute path", () => {
+  assert.ok(formatFooter([{ kind: "repo", name: "claude-bridges", behind: 2 }]).includes(`node ${path.join(REPO_DIR, "consult-cli.js")} --update`));
 });

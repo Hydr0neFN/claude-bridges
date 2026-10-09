@@ -117,7 +117,7 @@ node consult-cli.js --update          # brew upgrade --cask <outdated CLIs>; git
 
 In `--mode all`, `consult-cli` prints each engine's whole `## <engine>` section (answer or `[failed] reason`) the moment it settles, in completion order, then the `[consult] mode: all | ...` summary last. Per-engine timeouts are independent, so a slow engine never delays the others. `consult-bridge` returns one aggregated result but uses the same runner (`lib/panel.js`).
 
-On start, both `consult-cli` and `consult-bridge` check (at most once per 24h, cache in `~/.cache/claude-bridges/updates.json`) whether the engine CLIs (`brew outdated --cask` for brew-installed casks; `copilot version` otherwise) or this repo (`git fetch`, behind-count) are outdated. The check runs concurrently, never delays or fails a consult, and prints one footer line only when something is outdated (in the tool result for the MCP server). Nothing is installed without `--update`.
+On start, both `consult-cli` and `consult-bridge` check (at most once per 24h, cache in `~/.cache/claude-bridges/updates.json`) whether the engine CLIs (`brew outdated --cask --greedy` for brew-installed casks; `copilot version` otherwise) or this repo (`git fetch`, behind-count) are outdated. The footer comes from the previous check's cached result; a stale cache is refreshed by a detached background process (CLI) or concurrently (MCP server), so a consult is never delayed or failed. It prints one footer line only when something is outdated (in the tool result for the MCP server). Nothing is installed without `--update`.
 
 ## Install
 
@@ -183,7 +183,6 @@ Overrides for the consult panel: `COPILOT_BRIDGE_BIN`, `CODEX_BRIDGE_BIN`, `AGY_
 | `CODEX_MODEL` | (unset) | Passed as `-m` only when set |
 | `CODEX_EFFORT` | (unset) | Passed as `-c model_reasoning_effort="..."` |
 | `CLAUDE_BRIDGES_CACHE_DIR` | `~/.cache/claude-bridges` | Update-check cache location |
-| `CLAUDE_BRIDGES_UPDATE_WAIT_MS` | `4000` | CLI only: max wait for a live update check before exiting (cached result is used otherwise) |
 | `DEEPSEEKER_BASE` | `http://127.0.0.1:4000` | deeperseeker proxy base URL |
 | `DEEPSEEKER_MODEL` | `v4.1flash` | Model id passed to the proxy |
 | `DEEPSEEKER_API_KEY` | (read from proxy `.env`) | Proxy API key; falls back to `DEEPSEEKER_ENV_PATH` |

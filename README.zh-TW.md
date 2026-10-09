@@ -117,7 +117,7 @@ node consult-cli.js --update          # brew upgrade --cask <過期的 CLI>；gi
 
 `--mode all` 時，`consult-cli` 會在每個引擎完成的當下依完成順序印出該引擎完整的 `## <engine>` 區段（回答或 `[failed] 原因`），最後才印 `[consult] mode: all | ...` 摘要行。各引擎逾時彼此獨立，慢的引擎不會拖延其他引擎。`consult-bridge` 仍回傳單一彙整結果，但使用相同的執行器（`lib/panel.js`）。
 
-`consult-cli` 與 `consult-bridge` 啟動時會檢查（每 24 小時至多一次，快取於 `~/.cache/claude-bridges/updates.json`）引擎 CLI（brew 安裝的 cask 用 `brew outdated --cask`，否則用 `copilot version`）與本儲存庫（`git fetch` 後比對落後 commit 數）是否過期。檢查與諮詢並行，不會拖慢或使諮詢失敗；僅在有過期項目時印出一行頁尾（MCP 伺服器則放在工具結果內）。未加 `--update` 不會安裝任何東西。
+`consult-cli` 與 `consult-bridge` 啟動時會檢查（每 24 小時至多一次，快取於 `~/.cache/claude-bridges/updates.json`）引擎 CLI（brew 安裝的 cask 用 `brew outdated --cask --greedy`，否則用 `copilot version`）與本儲存庫（`git fetch` 後比對落後 commit 數）是否過期。頁尾取自上一次檢查的快取結果；快取過期時由分離的背景行程（CLI）或並行（MCP 伺服器）更新，因此不會拖慢或使諮詢失敗；僅在有過期項目時印出一行頁尾（MCP 伺服器則放在工具結果內）。未加 `--update` 不會安裝任何東西。
 
 ## 安裝
 
@@ -183,7 +183,6 @@ consult 小組的覆寫變數：`COPILOT_BRIDGE_BIN`、`CODEX_BRIDGE_BIN`、`AGY
 | `CODEX_MODEL` | （未設） | 僅在設定時以 `-m` 傳入 |
 | `CODEX_EFFORT` | （未設） | 以 `-c model_reasoning_effort="..."` 傳入 |
 | `CLAUDE_BRIDGES_CACHE_DIR` | `~/.cache/claude-bridges` | 更新檢查的快取位置 |
-| `CLAUDE_BRIDGES_UPDATE_WAIT_MS` | `4000` | 僅 CLI：結束前等待即時更新檢查的最長時間（逾時則使用快取結果） |
 | `DEEPSEEKER_BASE` | `http://127.0.0.1:4000` | deeperseeker proxy 的 base URL |
 | `DEEPSEEKER_MODEL` | `v4.1flash` | 傳給 proxy 的 model id |
 | `DEEPSEEKER_API_KEY` | （從 proxy `.env` 讀取） | Proxy API key，未設時回退至 `DEEPSEEKER_ENV_PATH` |

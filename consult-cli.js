@@ -11,18 +11,18 @@
 import { ENGINES } from "./lib/engines.js";
 import { parseArgs, parseOrder } from "./lib/args.js";
 import { runPanel, formatSection, summaryLine, writeEngineResult, writeDone } from "./lib/panel.js";
-import { checkUpdates, settle, applyUpdates, formatFooter } from "./lib/updates.js";
+import { checkUpdates, spawnRefresh, settle, applyUpdates, formatFooter } from "./lib/updates.js";
 
 const TIMEOUT_SEC = Number(process.env.CONSULT_TIMEOUT) || 300;
-const UPDATE_WAIT_MS = Number(process.env.CLAUDE_BRIDGES_UPDATE_WAIT_MS) || 4000;
 
 const args = parseArgs(process.argv.slice(2));
 
 if (args.checkUpdates || args.update) {
   const { items } = await settle(checkUpdates({ force: true }), 60000);
   if (args.update) {
-    for (const line of await applyUpdates({ items })) console.log(line);
-    checkUpdates({ force: true }).pending.then(() => process.exit(0));
+    const { log, failed } = await applyUpdates({ items });
+    for (const line of log) console.log(line);
+    process.exit(failed ? 1 : 0);
   } else {
     console.log(formatFooter(items) || "[consult] everything up to date");
   }
@@ -37,8 +37,9 @@ async function main() {
     process.exit(2);
   }
 
-  // Started now, runs concurrently with the consult; only cached/finished results are ever shown.
-  const updates = checkUpdates();
+  
+  // A stale cache is refreshed by a detached child; the footer only ever uses the cached result.
+  const updates = checkUpdates({ detach: spawnRefresh });
 
   const cwd = args.cwd || process.cwd();
   const mode = args.mode || (process.env.CONSULT_MODE === "first" ? "first" : "all");
@@ -50,7 +51,7 @@ async function main() {
   const run = (name) => ENGINES[name]({ prompt, cwd, timeoutSec: TIMEOUT_SEC, ...opts[name] });
 
   const finish = async (code) => {
-    const footer = formatFooter((await settle(updates, UPDATE_WAIT_MS)).items);
+    const footer = formatFooter(updates.items);
     if (footer) console.error(footer);
     process.exit(code);
   };

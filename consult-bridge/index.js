@@ -76,7 +76,7 @@ startServer("consult-bridge", "0.1.0", (server) => {
           const r = await run(name);
           if (r.ok) {
             const { text } = truncate(r.body, MAX_OUTPUT_CHARS);
-            const meta = [`mode: first`, `engine: ${name}`];
+            const meta = [`mode: first`, `engine: ${r.engine}`];
             if (trail.length) meta.push(`failover: ${trail.join("; ")}`);
             return withNotice(okText(`${text}\n\n---\n[consult] ${meta.join(" | ")}`));
           }

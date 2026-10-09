@@ -53,7 +53,12 @@ startServer("codex-bridge", "0.1.0", (server) => {
       const sandbox = args.sandbox || DEFAULT_SANDBOX;
       const model = args.model || DEFAULT_MODEL;
       const outFile = path.join(os.tmpdir(), `codex-bridge-${process.pid}-${randomUUID()}.txt`);
-      const { cmd, pre } = resolveCodex();
+      let cmd, pre;
+      try {
+        ({ cmd, pre } = resolveCodex());
+      } catch (e) {
+        return errText(`codex-bridge: ${e.message}. Install it or set CODEX_BRIDGE_BIN.`);
+      }
       const cliArgs = [
         ...pre,
         "exec",

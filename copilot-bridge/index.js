@@ -80,7 +80,12 @@ startServer("copilot-bridge", "0.1.0", (server) => {
     async (args) => {
       const cwd = args.cwd || process.cwd();
       const model = args.model || DEFAULT_MODEL;
-      const { cmd, pre } = resolveCopilot();
+      let cmd, pre;
+      try {
+        ({ cmd, pre } = resolveCopilot());
+      } catch (e) {
+        return errText(`copilot-bridge: ${e.message}. Install it or set COPILOT_BRIDGE_BIN.`);
+      }
       const cliArgs = [
         ...pre,
         "-p",
