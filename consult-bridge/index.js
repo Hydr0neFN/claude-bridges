@@ -8,19 +8,33 @@
 
 import { z } from "zod";
 import { startServer, truncate, positiveInt, okText, errText } from "../lib/common.js";
-import { ENGINES, ENGINE_NAMES } from "../lib/engines.js";
+import { ENGINES } from "../lib/engines.js";
+import { parseOrder } from "../lib/args.js";
+import { checkUpdates, formatFooter } from "../lib/updates.js";
 
 const TIMEOUT_SEC = positiveInt(process.env.CONSULT_TIMEOUT, 300); // per engine
 const MAX_OUTPUT_CHARS = positiveInt(process.env.CONSULT_MAX_OUTPUT_CHARS, 50000);
 const PER_ENGINE_CHARS = positiveInt(process.env.CONSULT_PER_ENGINE_CHARS, 20000);
 
 function defaultOrder() {
-  const raw = (process.env.CONSULT_ORDER || "copilot,codex,agy")
-    .split(",")
-    .map((s) => s.trim())
-    .filter((s) => ENGINE_NAMES.includes(s));
+  const raw = parseOrder(process.env.CONSULT_ORDER);
   return raw.length ? raw : ["copilot", "codex", "agy"];
 }
+
+// Throttled (24h) update check, started with the server. Never blocks a call:
+// the notice is whatever is known when the first result is built, shown once per
+// server process, inside the tool result (stdout belongs to the MCP protocol).
+const updates = checkUpdates();
+let noticeShown = false;
+const withNotice = (result) => {
+  if (noticeShown) return result;
+  const footer = formatFooter(updates.items);
+  if (!footer) return result;
+  noticeShown = true;
+  const last = result.content.length - 1;
+  result.content[last] = { type: "text", text: `${result.content[last].text}\n${footer}` };
+  return result;
+};
 
 startServer("consult-bridge", "0.1.0", (server) => {
   server.registerTool(
@@ -53,6 +67,7 @@ startServer("consult-bridge", "0.1.0", (server) => {
       const mode = args.mode || (process.env.CONSULT_MODE === "first" ? "first" : "all");
       const order = args.order?.length ? args.order : defaultOrder();
       const run = (name) => ENGINES[name]({ prompt: args.prompt, cwd, timeoutSec: TIMEOUT_SEC });
+      updates.pending.then((r) => { updates.items = r.items; });
 
       if (mode === "first") {
         const trail = [];
@@ -62,9 +77,9 @@ startServer("consult-bridge", "0.1.0", (server) => {
             const { text } = truncate(r.body, MAX_OUTPUT_CHARS);
             const meta = [`mode: first`, `engine: ${name}`];
             if (trail.length) meta.push(`failover: ${trail.join("; ")}`);
-            return okText(`${text}\n\n---\n[consult] ${meta.join(" | ")}`);
+            return withNotice(okText(`${text}\n\n---\n[consult] ${meta.join(" | ")}`));
           }
-          trail.push(`${name}: ${r.reason}`);
+          trail.push(`${r.engine}: ${r.reason}`);
         }
         return errText(
           `consult: all engines failed.\n${trail.map((t) => `- ${t}`).join("\n")}\n\nCheck auth (copilot login / codex login / agy) or quotas, then retry.`,
@@ -86,7 +101,7 @@ startServer("consult-bridge", "0.1.0", (server) => {
       const sections = good.map((r) => `## ${r.engine}\n\n${truncate(r.body, perCap).text}`);
       const meta = [`mode: all`, `answered: ${good.map((r) => r.engine).join(", ")}`];
       if (failed.length) meta.push(`failed: ${failed.join("; ")}`);
-      return okText(`${sections.join("\n\n")}\n\n---\n[consult] ${meta.join(" | ")}`);
+      return withNotice(okText(`${sections.join("\n\n")}\n\n---\n[consult] ${meta.join(" | ")}`));
     },
   );
 });
