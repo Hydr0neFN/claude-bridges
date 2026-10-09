@@ -29,20 +29,20 @@ test("parseOrder: filters unknown engines, applies default", () => {
 });
 
 test("searchDirs: extra dirs only off win32", () => {
-  const env = { PATH: "/a:/b" };
-  assert.deepEqual(searchDirs({ env, platform: "darwin", home: "/h" }), ["/a", "/b", "/opt/homebrew/bin", "/usr/local/bin", "/h/.local/bin"]);
+  const env = { PATH: ["/a", "/b"].join(path.delimiter) };
+  assert.deepEqual(searchDirs({ env, platform: "darwin", home: "/h" }), ["/a", "/b", "/opt/homebrew/bin", "/usr/local/bin", path.join("/h", ".local", "bin")]);
   assert.deepEqual(searchDirs({ env, platform: "win32", home: "/h" }), ["/a", "/b"]);
 });
 
 test("resolve on darwin: PATH, thin-PATH homebrew, override, not installed", () => {
-  const present = new Set(["/opt/homebrew/bin/codex", "/x/bin/copilot"]);
+  const present = new Set([path.join("/opt/homebrew/bin", "codex"), path.join("/x/bin", "copilot")]);
   const base = { platform: "darwin", home: "/h", exists: (p) => present.has(p) };
-  assert.equal(resolveCopilot({ ...base, env: { PATH: "/x/bin" } }).cmd, "/x/bin/copilot");
-  assert.equal(resolveCodex({ ...base, env: { PATH: "/usr/bin" } }).cmd, "/opt/homebrew/bin/codex");
+  assert.equal(resolveCopilot({ ...base, env: { PATH: "/x/bin" } }).cmd, path.join("/x/bin", "copilot"));
+  assert.equal(resolveCodex({ ...base, env: { PATH: "/usr/bin" } }).cmd, path.join("/opt/homebrew/bin", "codex"));
   assert.equal(resolveCodex({ ...base, env: { PATH: "", CODEX_BRIDGE_BIN: "/custom/codex" } }).cmd, "/custom/codex");
   assert.throws(() => resolveAgy({ ...base, env: { PATH: "/usr/bin" } }), (e) => {
     assert.ok(e instanceof NotInstalledError);
-    assert.match(e.message, /^agy: not installed \(looked in .*\/opt\/homebrew\/bin/);
+    assert.match(e.message, /^agy: not installed \(looked in .*[\/]opt[\/]homebrew[\/]bin/);
     return true;
   });
   assert.equal(resolveAgy({ ...base, env: { PATH: "", AGY_PATH: "/z/agy" } }).cmd, "/z/agy");

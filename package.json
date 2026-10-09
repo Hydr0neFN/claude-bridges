@@ -2,7 +2,7 @@
   "name": "claude-bridges",
   "version": "0.1.0",
   "private": true,
-  "scripts": { "test": "node --test test/" },
+  "scripts": { "test": "node --test" },
   "type": "module",
   "description": "MCP bridges that let Claude Code delegate to the GitHub Copilot CLI and OpenAI Codex CLI. Modeled on agy-bridge.",
   "dependencies": {
