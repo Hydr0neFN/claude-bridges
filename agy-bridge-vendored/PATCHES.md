@@ -1,10 +1,14 @@
 # Local patches to vendored agy-bridge
 
-Base: agy-bridge **0.4.1** (= npm `latest` as of 2026-07-25 — upstream has no fix).
-Patched file: `dist/index.js` only (no `src/` is vendored). Pristine copy: `dist/index.js.orig-0.4.1`.
+Base: agy-bridge **0.4.2** (rebased 2026-10-09 from 0.4.1; both were npm `latest` at their time).
+Patched file: `dist/index.js` only (no `src/` is vendored).
+Pristine copies: `dist/index.js.orig-0.4.2` (current base), `dist/index.js.orig-0.4.1` (previous base).
+Pre-upgrade backup: `dist/index.js.bak-20261009-pre-0.4.2` (the working 0.4.1-based file).
+The 0.4.2 file was produced by a 3-way merge (base 0.4.1, ours = bak-20261009-pre-0.4.2, theirs = 0.4.2);
+see §9 for what changed upstream and how each patch fared.
 
-**Any `npm i agy-bridge` / re-vendor silently reverts all of this.** Version number will still
-read 0.4.1, so a reinstall does not look like a downgrade. Re-apply, then re-run the verifier.
+**Any `npm i agy-bridge` / re-vendor silently reverts all of this.** Version number may still
+read the same, so a reinstall does not look like a downgrade. Re-apply, then re-run the verifier.
 
 ---
 
@@ -433,3 +437,34 @@ Chains now use only the 3.8 / 3.7 flash tiers:
 
 `AGY_DEFAULT_MODEL` still goes first (§6), so the chain is only a fallback. `scripts/verify-chains.mjs`
 passes. The change takes effect when the MCP server restarts.
+
+## 9. Rebase onto upstream 0.4.2 (2026-10-09)
+
+**Upstream delta 0.4.1 -> 0.4.2 (dist/index.js, ~+30/-10 lines of real change; rest is prettier reflow).**
+- `parseModels` replaced by `parseModelEntries`: understands the two-column `agy models` output
+  (`id<TAB>display name`), drops the `Fetching available models...` header when any line is tabbed,
+  and `ModelRegistry` now stores `{id?, name}` entries (`load()`; `available()` returns display names).
+- `resolveChain`: explicit/default model may be given as id or display name (mapped to display name).
+  Chains are still matched against display names, and the bundled chains are still display names.
+- `spawnDetached`: `detached: true` on every platform, and `windowsHide: true` was dropped.
+- package.json: only prettier/husky/commitlint/lint-staged dev tooling added (`prepare: husky`,
+  `format*` scripts). Runtime deps and engines unchanged, so no `npm install` was run and the dev-only
+  changes were NOT copied (`prepare: husky` would fail here). Version bumped only.
+- Prettier-only reflow in several places (timeout `setTimeout`, `cwd` describe, result footer).
+- Not changed upstream: `serverInfo.version` is still hardcoded `"0.4.0"` in the MCP handshake.
+
+**Per-patch fate.**
+
+| patch | fate |
+|---|---|
+| 1 slug normalization (`normModel`/`canonicalize`) | **kept, adjusted.** Upstream's id->name mapping still needs display-name chains; ours are slugs. `canonicalize` now runs over `e.id ?? e.name` of upstream's entries and returns the slug. |
+| 2b two-column `parseModels` | **dropped as code, superseded.** Upstream's `parseModelEntries` does the same job (and also handles old single-column display-name output, which ours would have truncated to the first word). A thin `parseModels()` wrapper returning `id ?? name` remains only so `scripts/verify-chains.mjs` keeps working. |
+| 2 / 7 chains, 3 `model` description | kept (conflict-free). |
+| 4 stdin / stream-json | kept. `spawnDetached` conflicted; kept our `stdinData` param. |
+| 5 background jobs | kept (conflict-free). |
+| 8 `windowsHide` | kept. Wrapper `execWithClosedStdin` unchanged; in `spawnDetached` we take upstream's `detached: true` AND re-add `windowsHide: true` (upstream's removal would bring the console flash back on Windows). Untested on Windows. |
+| 3 transient retry, 4 tool-arg retry, 4 web_lookup timeout | kept (conflict-free). |
+| 6 default-first | kept. Operates on the canonicalized (slug) default; upstream still *appends* the default, so it is not made obsolete. |
+
+Local edit outside dist: `scripts/verify-chains.mjs` now also extracts `parseModelEntries`.
+Takes effect only after the MCP server restarts.

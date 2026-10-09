@@ -14,7 +14,7 @@ const grab = (name) => {
 };
 
 const { parseModels, normModel, canonicalize } = new Function(
-  `${grab("parseModels")}\n${grab("normModel")}\n${grab("canonicalize")}
+  `${grab("parseModelEntries")}\n${grab("parseModels")}\n${grab("normModel")}\n${grab("canonicalize")}
    return { parseModels, normModel, canonicalize };`
 )();
 

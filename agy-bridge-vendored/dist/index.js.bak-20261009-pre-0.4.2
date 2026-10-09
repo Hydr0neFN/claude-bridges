@@ -38,23 +38,18 @@ function loadConfig(env = process.env) {
 }
 
 // src/models.ts
-// PATCH(agy-bridge-vendored): upstream 0.4.2 parses the two-column `agy models` output
-// (id<TAB>display name) into entries, but still matches chains against DISPLAY NAMES.
-// Our chains are slugs ("gemini-3.8-flash-high"), so we keep matching on a normalized key
-// (lowercase, strip non-alphanumerics; slug and display name collapse to the same key) over
-// each entry's id (falling back to name for old single-column output), and always return the
-// CLI's own canonical spelling (the slug, which is what `agy -m` has been proven to accept).
-function parseModelEntries(output) {
-  const lines = output.split("\n").map((l) => l.trim().replace(/\s*\(current\)$/, "")).filter((l) => l.length > 0);
-  const tabbed = lines.some((l) => l.includes("	"));
-  return lines.filter((l) => !tabbed || l.includes("	")).map((l) => {
-    const [first, ...rest] = l.split("	");
-    return rest.length > 0 ? { id: first.trim(), name: rest.join(" ").trim() } : { name: first };
-  });
-}
+// PATCH(agy-bridge-vendored, 2026-08-15): `agy models` now prints two tab-separated
+// columns ("gemini-3.7-flash-high\tGemini 3.7 Flash (High)") plus a "Fetching available
+// models..." header. Keeping the whole line made every canonicalize() lookup miss ->
+// silent "no preferred model available" -> all delegations ran agy's own default.
+// Keep only the first column and drop non-id lines.
 function parseModels(output) {
-  return parseModelEntries(output).map((e) => e.id ?? e.name);
+  return output.split("\n").map((l) => l.trim().replace(/\s*\(current\)$/, "").split(/[\t ]+/)[0]).filter((l) => l.length > 0 && !l.endsWith("...") && /^[a-z0-9][a-z0-9.\-]*$/i.test(l));
 }
+// PATCH(agy-bridge-vendored): agy >=1.1.x lists models as slugs ("gemini-3.6-flash-high")
+// while the bundled chains use display names ("Gemini 3.6 Flash (High)"). Exact-string
+// matching silently dropped every chain entry -> "no preferred model available".
+// Match on a normalized key instead, and always return the CLI's own canonical spelling.
 function normModel(name) {
   return String(name).toLowerCase().replace(/[^a-z0-9]/g, "");
 }
@@ -67,19 +62,15 @@ var ModelRegistry = class {
     this.fetchListing = fetchListing;
   }
   fetchListing;
-  entries = null;
+  listing = null;
   pending = null;
-  async load() {
-    if (this.entries) return this.entries;
-    this.pending ??= this.fetchListing().then(parseModelEntries).catch(() => null);
+  async available() {
+    if (this.listing) return this.listing;
+    this.pending ??= this.fetchListing().then(parseModels).catch(() => null);
     const result = await this.pending;
-    if (result) this.entries = result;
+    if (result) this.listing = result;
     else this.pending = null;
     return result;
-  }
-  /** Available model ids (display name when no id), or null when `agy models` could not be read. */
-  async available() {
-    return (await this.load())?.map((e) => e.id ?? e.name) ?? null;
   }
   async resolve(opts) {
     const r = await this.resolveChain(opts);
@@ -88,12 +79,9 @@ var ModelRegistry = class {
   /**
    * Returns every viable model in preference order so callers can fail over
    * (e.g. on quota exhaustion). `[undefined]` means "let agy pick".
-   * Caller-supplied names (`explicit`, `defaultModel`) may be either the id or
-   * the display name; both are normalised (local patch) to the CLI's id.
    */
   async resolveChain(opts) {
-    const entries = await this.load();
-    const available = entries?.map((e) => e.id ?? e.name) ?? null;
+    const available = await this.available();
     if (opts.explicit) {
       if (available === null) {
         return {
@@ -109,10 +97,7 @@ ${available.join("\n")}`
       );
     }
     if (available === null) {
-      return {
-        models: [void 0],
-        note: "could not list agy models; using agy's own default model"
-      };
+      return { models: [void 0], note: "could not list agy models; using agy's own default model" };
     }
     const chainModels = opts.chain.map((m) => canonicalize(m, available)).filter((m) => m !== void 0);
     const defaultCanonical = opts.defaultModel ? canonicalize(opts.defaultModel, available) : void 0;
@@ -122,10 +107,7 @@ ${available.join("\n")}`
     // so every no-explicit-model call silently ran the stale chain's first entry.
     const models = defaultCanonical ? [defaultCanonical, ...chainModels.filter((m) => m !== defaultCanonical)] : chainModels;
     if (models.length === 0) {
-      return {
-        models: [void 0],
-        note: "no preferred model available; using agy's own default model"
-      };
+      return { models: [void 0], note: "no preferred model available; using agy's own default model" };
     }
     return { models };
   }
@@ -254,8 +236,7 @@ var execWithClosedStdin = (file, args, options) => {
 var MAX_STDOUT_CHARS = 64 * 1024 * 1024;
 var MAX_STDERR_CHARS = 1024 * 1024;
 function spawnDetached(file, args, cwd, stdinData) {
-  // upstream 0.4.2: detached always true; local patch 8: keep windowsHide (console flash on Windows)
-  const child = spawn(file, args, { cwd, detached: true, windowsHide: true });
+  const child = spawn(file, args, { cwd, detached: process.platform !== "win32", windowsHide: true });
   if (stdinData !== void 0 && child.stdin) {
     child.stdin.on("error", () => {
     });
@@ -443,15 +424,12 @@ async function runAgy(req, cfg, deps = defaultDeps) {
       }
     }, pollMs);
     timers.push(
-      setTimeout(
-        () => {
-          killChild();
-          finish(
-            () => reject(new Error(`agy timed out after ${timeoutSec}s (AGY_TIMEOUT to adjust).`))
-          );
-        },
-        timeoutSec * 1e3 + graceMs
-      )
+      setTimeout(() => {
+        killChild();
+        finish(
+          () => reject(new Error(`agy timed out after ${timeoutSec}s (AGY_TIMEOUT to adjust).`))
+        );
+      }, timeoutSec * 1e3 + graceMs)
     );
     const onAbort = () => {
       killChild();
@@ -542,9 +520,7 @@ function resolveFiles(files, cwd) {
   return files.map((f) => path2.isAbsolute(f) ? f : path2.resolve(cwd, f));
 }
 var commonShape = {
-  cwd: z.string().optional().describe(
-    "Absolute path to the working directory / project root. Defaults to the server's cwd."
-  ),
+  cwd: z.string().optional().describe("Absolute path to the working directory / project root. Defaults to the server's cwd."),
   model: z.string().optional().describe(
     "Override the model (exact name from `agy models`, e.g. \"gemini-3.7-flash-high\", \"gemini-3.1-pro-high\"). Normally omit \u2014 the tool routes automatically."
   )
@@ -1051,12 +1027,10 @@ function createToolHandler(tool, cfg, registry, deps = defaultDeps, cooldowns = 
       if (attempts.length) meta.push(`failover: ${attempts.join("; ")}`);
       if (result.sessionId) meta.push(`session: ${result.sessionId} (use follow_up to continue)`);
       return {
-        content: [
-          { type: "text", text: `${result.output}
+        content: [{ type: "text", text: `${result.output}
 
 ---
-[agy-bridge] ${meta.join(" | ")}` }
-        ]
+[agy-bridge] ${meta.join(" | ")}` }]
       };
     } catch (err) {
       let text = err.message;
