@@ -1,0 +1,153 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import path from "node:path";
+import fs from "node:fs";
+import os from "node:os";
+import { parseArgs, parseOrder } from "../lib/args.js";
+import { resolveCopilot, resolveCodex, resolveAgy, findBinary, searchDirs, NotInstalledError } from "../lib/common.js";
+import { copilotRejectedModel, copilotArgs, codexArgs, launchFailure } from "../lib/engines.js";
+import {
+  checkUpdates, formatFooter, isFresh, caskToken, parseBrewOutdated, applyUpdates, CACHE_TTL_MS, readCache,
+} from "../lib/updates.js";
+
+const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "cb-test-"));
+
+test("parseArgs: flags, prompt words, update flags", () => {
+  const a = parseArgs(["--mode", "first", "--order", "codex,agy", "hello", "world", "--codex-model", "m", "--check-updates"]);
+  assert.equal(a.mode, "first");
+  assert.equal(a.order, "codex,agy");
+  assert.equal(a.codexModel, "m");
+  assert.equal(a.copilotModel, null);
+  assert.equal(a.checkUpdates, true);
+  assert.equal(a.update, false);
+  assert.deepEqual(a.prompt, ["hello", "world"]);
+});
+
+test("parseOrder: filters unknown engines, applies default", () => {
+  assert.deepEqual(parseOrder("copilot, nope ,codex"), ["copilot", "codex"]);
+  assert.deepEqual(parseOrder(undefined), ["copilot", "codex", "agy"]);
+});
+
+test("searchDirs: extra dirs only off win32", () => {
+  const env = { PATH: "/a:/b" };
+  assert.deepEqual(searchDirs({ env, platform: "darwin", home: "/h" }), ["/a", "/b", "/opt/homebrew/bin", "/usr/local/bin", "/h/.local/bin"]);
+  assert.deepEqual(searchDirs({ env, platform: "win32", home: "/h" }), ["/a", "/b"]);
+});
+
+test("resolve on darwin: PATH, thin-PATH homebrew, override, not installed", () => {
+  const present = new Set(["/opt/homebrew/bin/codex", "/x/bin/copilot"]);
+  const base = { platform: "darwin", home: "/h", exists: (p) => present.has(p) };
+  assert.equal(resolveCopilot({ ...base, env: { PATH: "/x/bin" } }).cmd, "/x/bin/copilot");
+  assert.equal(resolveCodex({ ...base, env: { PATH: "/usr/bin" } }).cmd, "/opt/homebrew/bin/codex");
+  assert.equal(resolveCodex({ ...base, env: { PATH: "", CODEX_BRIDGE_BIN: "/custom/codex" } }).cmd, "/custom/codex");
+  assert.throws(() => resolveAgy({ ...base, env: { PATH: "/usr/bin" } }), (e) => {
+    assert.ok(e instanceof NotInstalledError);
+    assert.match(e.message, /^agy: not installed \(looked in .*\/opt\/homebrew\/bin/);
+    return true;
+  });
+  assert.equal(resolveAgy({ ...base, env: { PATH: "", AGY_PATH: "/z/agy" } }).cmd, "/z/agy");
+});
+
+test("resolve on win32: AppData fallbacks apply, no throw", () => {
+  const base = { platform: "win32", home: "C:/Users/u", exists: () => false, env: { PATH: "", LOCALAPPDATA: "C:/L" } };
+  assert.match(resolveCodex(base).cmd, /Programs.OpenAI.Codex.bin.codex\.exe$/);
+  assert.match(resolveAgy(base).cmd, /agy.bin.agy\.exe$/);
+});
+
+test("findBinary reports searched dirs when missing", () => {
+  const r = findBinary("nothing", { env: { PATH: "/q" }, platform: "linux", home: "/h", exists: () => false });
+  assert.equal(r.path, null);
+  assert.equal(r.searched[0], "/q");
+});
+
+test("launchFailure never leaks raw ENOENT", () => {
+  const r = launchFailure("codex", Object.assign(new Error("spawn x ENOENT"), { code: "ENOENT" }));
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /^not installed/);
+  assert.match(launchFailure("x", new NotInstalledError("x", ["/a"])).reason, /^not installed \(looked in \/a\)$/);
+});
+
+test("copilot model fallback decision", () => {
+  const rejected = { code: 1, stdout: "", stderr: 'Error: Model "gpt-5" from --model flag is not available.' };
+  assert.equal(copilotRejectedModel(rejected), true);
+  assert.equal(copilotRejectedModel({ ...rejected, code: 0 }), false);
+  assert.equal(copilotRejectedModel({ code: 1, stdout: "", stderr: "auth failed" }), false);
+});
+
+test("model/effort flags only passed when set", () => {
+  const c = copilotArgs({ prompt: "p", cwd: "/w" });
+  assert.ok(!c.includes("--model") && !c.includes("--reasoning-effort"));
+  const c2 = copilotArgs({ prompt: "p", cwd: "/w", model: "m", effort: "high" });
+  assert.deepEqual(c2.slice(-4), ["--model", "m", "--reasoning-effort", "high"]);
+  const x = codexArgs({ prompt: "p", cwd: "/w", outFile: "/o" });
+  assert.ok(!x.includes("-m") && !x.includes("-c"));
+  const x2 = codexArgs({ prompt: "p", cwd: "/w", outFile: "/o", model: "gpt", effort: "low" });
+  assert.deepEqual(x2.slice(-4), ["-m", "gpt", "-c", 'model_reasoning_effort="low"']);
+});
+
+test("footer formatting: silent when current, one line when outdated", () => {
+  assert.equal(formatFooter([]), null);
+  const f = formatFooter([
+    { kind: "cli", name: "codex", token: "codex", current: "0.1", latest: "0.2" },
+    { kind: "repo", name: "claude-bridges", behind: 1 },
+  ]);
+  assert.ok(!f.includes("\n"));
+  assert.match(f, /codex 0\.1 -> 0\.2; claude-bridges 1 commit behind/);
+  assert.match(formatFooter([{ kind: "cli", name: "copilot", token: null }]), /copilot \(update manually\)/);
+});
+
+test("brew parsing and cask token", () => {
+  assert.equal(caskToken("/opt/homebrew/Caskroom/copilot-cli/1.0.94/copilot"), "copilot-cli");
+  assert.equal(caskToken("/usr/local/bin/x"), null);
+  const m = parseBrewOutdated(JSON.stringify({ casks: [{ name: "codex", installed_versions: ["1"], current_version: "2" }] }));
+  assert.deepEqual(m.get("codex"), { current: "1", latest: "2" });
+  assert.equal(parseBrewOutdated("garbage").size, 0);
+});
+
+test("update-check throttling: fresh cache skips collect, stale runs it, force overrides", async () => {
+  const file = path.join(tmp(), "u.json");
+  const item = [{ kind: "repo", name: "claude-bridges", behind: 2 }];
+  let calls = 0;
+  const collect = async () => (calls++, item);
+  const t0 = 1_000_000;
+
+  const first = checkUpdates({ file, now: t0, collect });
+  assert.deepEqual(first.items, []); // nothing cached yet, result arrives via pending
+  assert.deepEqual((await first.pending).items, item);
+  assert.equal(calls, 1);
+
+  const second = checkUpdates({ file, now: t0 + 1000, collect });
+  assert.equal(second.fromCache, true);
+  assert.deepEqual(second.items, item);
+  assert.equal(calls, 1);
+
+  checkUpdates({ file, now: t0 + CACHE_TTL_MS + 1, collect });
+  assert.equal(calls, 2);
+  checkUpdates({ file, now: t0 + CACHE_TTL_MS + 2, collect, force: true });
+  assert.equal(calls, 3);
+  assert.ok(isFresh({ checkedAt: t0 }, t0 + 5));
+  assert.ok(!isFresh({ checkedAt: t0 }, t0 + CACHE_TTL_MS));
+});
+
+test("update check: stamps attempt up front and survives collector failure", async () => {
+  const file = path.join(tmp(), "u.json");
+  const r = checkUpdates({ file, now: 5, collect: async () => { throw new Error("boom"); } });
+  assert.equal(readCache(file).checkedAt, 5);
+  assert.deepEqual((await r.pending).items, []);
+});
+
+test("applyUpdates: refuses on dirty repo, upgrades casks, ff-only pull when clean", async () => {
+  const log = [];
+  const mk = (dirty) => async ({ cmd, args }) => {
+    log.push(`${cmd} ${args.join(" ")}`);
+    return { code: 0, stdout: args.includes("--porcelain") && dirty ? " M file" : "", stderr: "" };
+  };
+  const items = [{ kind: "cli", name: "codex", token: "codex" }, { kind: "repo", name: "claude-bridges", behind: 1 }];
+  const dirty = await applyUpdates({ items, run: mk(true), repoDir: "/r" });
+  assert.ok(dirty.some((l) => /refusing to pull/.test(l)));
+  assert.ok(!log.some((l) => l.includes("pull")));
+  assert.ok(log.includes("brew upgrade --cask codex"));
+  const clean = await applyUpdates({ items, run: mk(false), repoDir: "/r" });
+  assert.ok(log.includes("git -C /r pull --ff-only"));
+  assert.ok(clean.some((l) => /pull --ff-only done/.test(l)));
+});
