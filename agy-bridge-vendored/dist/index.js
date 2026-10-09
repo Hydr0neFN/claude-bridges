@@ -254,8 +254,10 @@ var execWithClosedStdin = (file, args, options) => {
 var MAX_STDOUT_CHARS = 64 * 1024 * 1024;
 var MAX_STDERR_CHARS = 1024 * 1024;
 function spawnDetached(file, args, cwd, stdinData) {
-  // upstream 0.4.2: detached always true; local patch 8: keep windowsHide (console flash on Windows)
-  const child = spawn(file, args, { cwd, detached: true, windowsHide: true });
+  // upstream 0.4.2: detached always true. Local patch 10: not on win32 -- detached means
+  // DETACHED_PROCESS there, which voids windowsHide (CREATE_NO_WINDOW), so agy.exe runs with no
+  // console and every console child it starts (shell tool calls) pops a visible window.
+  const child = spawn(file, args, { cwd, detached: process.platform !== "win32", windowsHide: true });
   if (stdinData !== void 0 && child.stdin) {
     child.stdin.on("error", () => {
     });

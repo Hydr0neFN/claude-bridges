@@ -102,6 +102,7 @@ for (const name of ["delegate_async", "job_status", "job_result", "job_cancel"])
 check("JOB_TOOLS registered on the server", /for \(const tool of JOB_TOOLS\)/.test(src));
 check("--job-worker entry branch present", /process\.argv\[2\] === "--job-worker"/.test(src));
 check("worker survives parent exit (detached: true)", /"--job-worker", jobPath\(cwd, job\.id\)\][\s\S]{0,120}detached: true/.test(src));
+check("agy child not DETACHED_PROCESS on win32 (patch 10)", /detached: process\.platform !== "win32", windowsHide: true/.test(src));
 check("cancel kills the whole process tree", /taskkill\.exe/.test(src) && /"\/T", "\/F"/.test(src));
 
 console.log(bad === 0 ? "\nALL CHECKS PASS" : `\n${bad} FAILURES`);

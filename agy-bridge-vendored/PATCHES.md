@@ -468,3 +468,28 @@ passes. The change takes effect when the MCP server restarts.
 
 Local edit outside dist: `scripts/verify-chains.mjs` now also extracts `parseModelEntries`.
 Takes effect only after the MCP server restarts.
+
+## 10. Console windows popping again after 0.4.2 — `detached` voids `windowsHide` on Windows (2026-10-09)
+
+**Symptom.** After the 0.4.2 rebase, a console window occasionally pops while agy works — only
+when agy itself runs a console program (its shell tool: `cmd`, `powershell`, `git`, ...).
+
+**Cause.** Upstream 0.4.2 made `spawnDetached` use `detached: true` on every platform. On Windows
+libuv maps that to `DETACHED_PROCESS`, under which `CREATE_NO_WINDOW` (`windowsHide`) is ignored:
+`agy.exe` runs with no console at all, so every console child it starts gets a brand-new, visible
+console. Patch 9 re-added `windowsHide` next to `detached` assuming it still applied; it does not.
+
+**Proof (probe, scratch scripts).** A console grandchild reported `GetConsoleWindow()` /
+`IsWindowVisible()`:
+- parent → child `{detached:true, windowsHide:true}` → grandchild: `visible=True`
+- parent → child `{windowsHide:true}` → grandchild: `hwnd=0` (no window)
+- same two cases under a `{detached:true, stdio:"ignore"}` worker (the `delegate_async` chain): identical.
+
+**Fix.** `detached: process.platform !== "win32"` in `spawnDetached` (the pre-0.4.2 behaviour).
+The job worker itself stays `detached: true` (needed to survive the MCP server, see trap a); its
+`agy.exe` child is now non-detached with `CREATE_NO_WINDOW`, so agy and everything it starts share
+one hidden console. POSIX unchanged (process-group kill still works).
+
+**Verified.** `verify-chains.mjs` ALL CHECKS PASS (new check for this line); fresh stdio MCP client:
+`delegate` with a shell tool call (`whoami`) returned the right output; `delegate_async` +
+`job_cancel` took `agy.exe` 1 → 0. Takes effect after the MCP server restarts.
