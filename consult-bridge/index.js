@@ -12,7 +12,7 @@ import { runSpec } from "../lib/engines.js";
 import { runPanel, runChain, lastResortNote, authHint } from "../lib/panel.js";
 import { parseOrder, parseOrderDetailed, nonBlank } from "../lib/args.js";
 import { checkUpdates, formatFooter } from "../lib/updates.js";
-import { peekNimModels, formatNimNotice, orderUsesNim } from "../lib/nim-models.js";
+import { peekNimModels, nimNoticeGate, orderUsesNim } from "../lib/nim-models.js";
 
 const TIMEOUT_SEC = positiveInt(process.env.CONSULT_TIMEOUT, 300); // per engine
 const MAX_OUTPUT_CHARS = positiveInt(process.env.CONSULT_MAX_OUTPUT_CHARS, 50000);
@@ -28,9 +28,9 @@ function defaultOrder() {
 // Throttled (24h) update check, started with the server. Never blocks a call:
 // the notice is whatever is known when the first result is built, shown once per
 // server process, inside the tool result (stdout belongs to the MCP protocol).
+// The NIM notice is throttled by a shared file (3 shows, then a day of silence), not per process.
 const updates = checkUpdates();
 let noticeShown = false;
-let nimShown = false;
 const withNotice = (result, order) => {
   const lines = [];
   if (!noticeShown) {
@@ -38,13 +38,12 @@ const withNotice = (result, order) => {
     if (footer) (noticeShown = true), lines.push(footer);
   }
   // NIM new-model notice only for runs that use nim; peek may spawn a detached refresh of a stale cache.
-  if (!nimShown && orderUsesNim(order)) {
-    const nim = formatNimNotice(peekNimModels());
-    if (nim) (nimShown = true), lines.push(nim);
-  }
+  const nim = orderUsesNim(order) ? nimNoticeGate(peekNimModels()) : null;
+  if (nim?.text) lines.push(nim.text);
   if (!lines.length) return result;
   const last = result.content.length - 1;
   result.content[last] = { type: "text", text: `${result.content[last].text}\n${lines.join("\n")}` };
+  nim?.commit();
   return result;
 };
 

@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import { parseOrder, parseOrderDetailed, resolvePrompt, parseArgs, nonBlank } from "../lib/args.js";
 import {
-  ENGINES, DEFAULT_NIM_MODEL, resolveNimKey, extractAnswer, redact, retryDelayMs, parseSpec, runSpec,
+  ENGINES, DEFAULT_NIM_MODEL, nimTimeoutSec, resolveNimKey, extractAnswer, redact, retryDelayMs, parseSpec, runSpec,
 } from "../lib/engines.js";
 import { safeFileName, writeEngineResult, runChain, isFinal, formatSection, lastResortNote, authHint } from "../lib/panel.js";
 
@@ -100,7 +100,7 @@ test("nim: request shape, label, default model and max_tokens", async () => {
   assert.equal(f.calls[0].url, "https://integrate.api.nvidia.com/v1/chat/completions");
   assert.equal(f.calls[0].init.headers.Authorization, `Bearer ${FAKE_KEY}`);
   assert.deepEqual(f.calls[0].body, {
-    model: DEFAULT_NIM_MODEL, stream: false, max_tokens: 8192, messages: [{ role: "user", content: "ping" }],
+    model: DEFAULT_NIM_MODEL, stream: true, max_tokens: 8192, messages: [{ role: "user", content: "ping" }],
   });
 });
 
@@ -335,4 +335,268 @@ test("nim: a key echoed in a successful body is redacted", async () => {
 test("safeFileName: Windows reserved device names get a _ prefix", () => {
   for (const n of ["con", "CON", "prn", "Aux", "nul", "com1", "COM9", "lpt3", "con.x"]) assert.equal(safeFileName(n), `_${n}`);
   for (const n of ["com0", "console", "nim_con", "codex", "lpt10"]) assert.equal(safeFileName(n), n);
+});
+
+test("nimTimeoutSec: default 600, NIM_TIMEOUT honoured, clamped to 600, garbage -> 600, CONSULT_TIMEOUT ignored", () => {
+  assert.equal(nimTimeoutSec({}), 600);
+  assert.equal(nimTimeoutSec({ NIM_TIMEOUT: "120" }), 120);
+  assert.equal(nimTimeoutSec({ NIM_TIMEOUT: "1.5" }), 1.5);
+  assert.equal(nimTimeoutSec({ NIM_TIMEOUT: "9999" }), 600);
+  for (const bad of ["abc", "", "0", "-5", "NaN", "Infinity"]) assert.equal(nimTimeoutSec({ NIM_TIMEOUT: bad }), 600, bad);
+  assert.equal(nimTimeoutSec({ CONSULT_TIMEOUT: "30" }), 600);
+});
+
+test("runSpec: nim gets its own timeout, not the caller's", async () => {
+  const timeout = async () => { throw Object.assign(new Error("aborted"), { name: "TimeoutError" }); };
+  const base = { prompt: "q", cwd: "/w", timeoutSec: 300, fetchImpl: timeout };
+  const r = await runSpec("nim", { ...base, env: envWithKey });
+  assert.match(r.reason, /^timed out after 600s/);
+  const r2 = await runSpec("nim", { ...base, env: { ...envWithKey, NIM_TIMEOUT: "120" } });
+  assert.match(r2.reason, /^timed out after 120s/);
+  const r3 = await runSpec("nim", { ...base, env: { ...envWithKey, NIM_TIMEOUT: "9999" } });
+  assert.match(r3.reason, /^timed out after 600s/);
+  // Direct engine call without a timeout also falls back to NIM_TIMEOUT / 600.
+  const r4 = await ENGINES.nim({ prompt: "p", env: { ...envWithKey, NIM_TIMEOUT: "90" }, fetchImpl: timeout });
+  assert.match(r4.reason, /^timed out after 90s/);
+});
+
+// --- SSE streaming ---
+
+const sse = (o) => `data: ${typeof o === "string" ? o : JSON.stringify(o)}\n\n`;
+const delta = (d, finish_reason = null) => sse({ choices: [{ delta: d, finish_reason }] });
+/** Response whose body yields `chunks` (strings, split exactly as given), then ends or errors with `err`. */
+function streamRes(chunks, { err, status = 200, type = "text/event-stream" } = {}) {
+  const enc = new TextEncoder();
+  let i = 0;
+  // Pull-based: c.error() would discard chunks still queued, but a real abort arrives after they were read.
+  const body = new ReadableStream({
+    pull(c) {
+      if (i < chunks.length) c.enqueue(enc.encode(chunks[i++]));
+      else if (err) c.error(err);
+      else c.close();
+    },
+  }, { highWaterMark: 0 });
+  return new Response(body, { status, headers: { "content-type": type } });
+}
+const timeoutErr = () => Object.assign(new Error("aborted"), { name: "TimeoutError" });
+const runNim = (f, extra = {}) => ENGINES.nim({ prompt: "p", timeoutSec: 5, env: envWithKey, fetchImpl: f, ...extra });
+
+test("nim stream: sends stream:true + Accept, joins content across chunks split mid-line, stops at [DONE]", async () => {
+  const wire = delta({ role: "assistant" }) + delta({ content: "Hel" }) + ": keep-alive\n\n" + delta({ content: "lo wörld" }) +
+    delta({}, "stop") + sse("[DONE]") + delta({ content: "IGNORED" });
+  // Cut into 7-char pieces so lines (and a multibyte char) straddle reads.
+  const bytes = new TextEncoder().encode(wire);
+  const pieces = [];
+  for (let i = 0; i < bytes.length; i += 7) pieces.push(bytes.slice(i, i + 7));
+  const body = new ReadableStream({ start(c) { pieces.forEach((p) => c.enqueue(p)); c.close(); } });
+  const f = fakeFetch([() => new Response(body, { headers: { "content-type": "text/event-stream; charset=utf-8" } })]);
+  const r = await runNim(f);
+  assert.deepEqual(r, { engine: `nim:${DEFAULT_NIM_MODEL}`, ok: true, body: "Hello wörld" });
+  assert.equal(f.calls[0].body.stream, true);
+  assert.equal(f.calls[0].init.headers.Accept, "text/event-stream");
+});
+
+test("nim stream: reasoning deltas then content; <think> and reasoning_content behave like non-stream", async () => {
+  const f = fakeFetch([() => streamRes([
+    delta({ reasoning_content: "thinking " }), delta({ reasoning: "more" }), delta({ content: "the answer" }), delta({}, "stop"), sse("[DONE]"),
+  ])]);
+  assert.equal((await runNim(f)).body, "the answer");
+  const g = fakeFetch([() => streamRes([delta({ reasoning_content: "only " }), delta({ reasoning_content: "thoughts" }, "stop")])]);
+  const r = await runNim(g);
+  assert.equal(r.ok, true);
+  assert.equal(r.degraded, true);
+  assert.equal(r.body, "[reasoning only: model returned no final answer]\n\nonly thoughts");
+  const h = fakeFetch([() => streamRes([delta({ content: "<think>plan</think>" }), delta({ content: "final" }, "stop")])]);
+  assert.equal((await runNim(h)).body, "final");
+});
+
+test("nim stream: finish_reason length adds the truncation note; last chunk with a finish wins", async () => {
+  const f = fakeFetch([() => streamRes([delta({ content: "cut" }, "length"), delta({})])]);
+  assert.equal((await runNim(f)).body, "cut\n\n[truncated: hit max_tokens]");
+  const g = fakeFetch([() => streamRes([delta({ content: "a" }, "length"), delta({ content: "b" }, "stop")])]);
+  assert.equal((await runNim(g)).body, "ab");
+});
+
+test("nim stream: stream ending without [DONE] or trailing newline still parses the last line", async () => {
+  const f = fakeFetch([() => streamRes([`data: ${JSON.stringify({ choices: [{ delta: { content: "tail" }, finish_reason: "stop" }] })}`])]);
+  assert.equal((await runNim(f)).body, "tail");
+});
+
+test("nim stream: abort mid-stream keeps partial content with a timeout note (ok, not degraded)", async () => {
+  const f = fakeFetch([() => streamRes([delta({ content: "partial " }), delta({ content: "text" })], { err: timeoutErr() })]);
+  const r = await runNim(f, { timeoutSec: 9 });
+  assert.deepEqual(r, { engine: `nim:${DEFAULT_NIM_MODEL}`, ok: true, body: "partial text\n\n[truncated: timed out after 9s]" });
+});
+
+test("nim stream: abort with only reasoning is reasoning-only; with nothing it is a plain timeout", async () => {
+  const f = fakeFetch([() => streamRes([delta({ reasoning_content: "hmm" })], { err: timeoutErr() })]);
+  const r = await runNim(f);
+  assert.equal(r.ok, true);
+  assert.equal(r.degraded, true);
+  assert.match(r.body, /^\[reasoning only/);
+  const g = fakeFetch([() => streamRes([], { err: timeoutErr() })]);
+  const r2 = await runNim(g, { timeoutSec: 9 });
+  assert.equal(r2.ok, false);
+  assert.match(r2.reason, /^timed out after 9s/);
+});
+
+test("nim stream: a non-timeout interruption keeps partial text and is labelled, key redacted", async () => {
+  const f = fakeFetch([() => streamRes([delta({ content: "some" })], { err: new Error(`reset ${FAKE_KEY}`) })]);
+  const r = await runNim(f);
+  assert.equal(r.ok, true);
+  assert.match(r.body, /^some\n\n\[truncated: stream interrupted: reset nvapi-\*\*\*\]$/);
+  assert.ok(!r.body.includes(FAKE_KEY));
+});
+
+test("nim: undici header/body timeouts get a clear reason instead of 'fetch failed'", async () => {
+  const undici = (code) => Object.assign(new TypeError("fetch failed"), { cause: Object.assign(new Error(code), { code }) });
+  const r = await runNim(async () => { throw undici("UND_ERR_HEADERS_TIMEOUT"); });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /^no response headers within ~300 s \(client limit/);
+  assert.ok(!/fetch failed|unreachable/.test(r.reason));
+  const g = fakeFetch([() => streamRes([delta({ content: "part" })], { err: undici("UND_ERR_BODY_TIMEOUT") })]);
+  const r2 = await runNim(g);
+  assert.equal(r2.ok, true);
+  assert.equal(r2.body, "part\n\n[truncated: stream stalled, no data for ~300 s (client limit)]");
+  const h = fakeFetch([() => streamRes([], { err: undici("UND_ERR_BODY_TIMEOUT") })]);
+  assert.match((await runNim(h)).reason, /^stream stalled, no data for ~300 s/);
+  const boom = await runNim(async () => { throw new Error("ECONNREFUSED"); });
+  assert.match(boom.reason, /^unreachable: ECONNREFUSED/);
+});
+
+test("nim stream: in-stream error event with no text is a failure", async () => {
+  const f = fakeFetch([() => streamRes([sse({ error: { message: "model overloaded" } })])]);
+  const r = await runNim(f);
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /stream error: model overloaded/);
+});
+
+test("nim stream: HTTP 504 gets the ~300 s gateway message, 502 a plain gateway error with detail; no retry", async () => {
+  const f = fakeFetch([() => new Response("<html>gateway</html>", { status: 504 })]);
+  const sleep = sleeper();
+  const r = await runNim(f, { sleep });
+  assert.equal(r.ok, false);
+  assert.equal(
+    r.reason,
+    "NVIDIA gateway timeout (HTTP 504: the model did not start answering within ~300 s; free-tier queue stalled, try another model)",
+  );
+  assert.equal(f.calls.length, 1);
+  assert.equal(sleep.slept.length, 0);
+
+  const g = fakeFetch([() => new Response(`bad gateway for ${FAKE_KEY} ${"x".repeat(500)}`, { status: 502 })]);
+  const r2 = await runNim(g, { sleep });
+  assert.equal(r2.ok, false);
+  assert.match(r2.reason, /^NVIDIA gateway error \(HTTP 502\): bad gateway for nvapi-\*\*\* x+$/);
+  assert.ok(!r2.reason.includes("~300 s") && !r2.reason.includes(FAKE_KEY));
+  assert.ok(r2.reason.length < 380);
+  assert.equal(g.calls.length, 1);
+  const h = fakeFetch([() => new Response("", { status: 502 })]);
+  assert.equal((await runNim(h)).reason, "NVIDIA gateway error (HTTP 502)");
+});
+
+test("nim stream: 429 is still retried once, then the stream is read", async () => {
+  const f = fakeFetch([
+    () => new Response("slow down", { status: 429, headers: { "retry-after": "1" } }),
+    () => streamRes([delta({ content: "ok" }, "stop")]),
+  ]);
+  const sleep = sleeper();
+  const r = await runNim(f, { timeoutSec: 30, sleep });
+  assert.equal(r.body, "ok");
+  assert.deepEqual(sleep.slept, [1000]);
+});
+
+test("nim stream: a JSON reply (not event-stream) is parsed as a normal completion", async () => {
+  const f = fakeFetch([() => jsonRes(reply({ content: "plain json" }), { headers: { "content-type": "application/json" } })]);
+  assert.equal((await runNim(f)).body, "plain json");
+});
+
+test("nim stream: a key echoed in streamed text is redacted; deepseek stays non-streamed", async () => {
+  const f = fakeFetch([() => streamRes([delta({ content: `key ${FAKE_KEY}` }, "stop")])]);
+  const r = await runNim(f);
+  assert.ok(!r.body.includes(FAKE_KEY));
+  const d = fakeFetch([() => jsonRes(reply({ content: "x" }))]);
+  const prev = process.env.DEEPSEEKER_API_KEY;
+  process.env.DEEPSEEKER_API_KEY = "ds-test";
+  try {
+    await ENGINES.deepseek({ prompt: "p", timeoutSec: 5, fetchImpl: d });
+  } finally {
+    if (prev === undefined) delete process.env.DEEPSEEKER_API_KEY;
+    else process.env.DEEPSEEKER_API_KEY = prev;
+  }
+  assert.equal(d.calls[0].body.stream, false);
+  assert.equal(d.calls[0].init.headers.Accept, undefined);
+});
+
+test("nim stream: one event may span several data: lines (joined with newline), any line ending, optional space", async () => {
+  const payload = JSON.stringify({ choices: [{ delta: { content: "joined" }, finish_reason: "stop" }] });
+  const cut = payload.indexOf("\"delta\"");
+  const event = `event: message\nid: 1\n: comment\ndata: ${payload.slice(0, cut)}\ndata:${payload.slice(cut)}\n\n`;
+  // JSON tolerates the newline between the two halves, so the joined payload parses.
+  const f = fakeFetch([() => streamRes([event, sse("[DONE]")])]);
+  assert.equal((await runNim(f)).body, "joined");
+  for (const eol of ["\r\n", "\r", "\n"]) {
+    const wire = [delta({ content: "a" }), delta({ content: "b" }, "stop"), sse("[DONE]")].join("").replace(/\n/g, eol);
+    for (const size of [1, 5, wire.length]) {
+      const parts = wire.match(new RegExp(`[^]{1,${size}}`, "g"));
+      const g = fakeFetch([() => streamRes(parts)]);
+      assert.equal((await runNim(g)).body, "ab", `eol=${JSON.stringify(eol)} size=${size}`);
+    }
+  }
+});
+
+test("nim stream: a final event without a terminating blank line is dispatched at EOF", async () => {
+  const f = fakeFetch([() => streamRes([`data: ${JSON.stringify({ choices: [{ delta: { content: "eof" }, finish_reason: "stop" }] })}\n`])]);
+  assert.equal((await runNim(f)).body, "eof");
+});
+
+test("nim stream: EOF with neither [DONE] nor finish_reason keeps the text with a truncation note", async () => {
+  const f = fakeFetch([() => streamRes([delta({ content: "half an ans" })])]);
+  const r = await runNim(f);
+  assert.deepEqual(r, { engine: `nim:${DEFAULT_NIM_MODEL}`, ok: true, body: "half an ans\n\n[truncated: stream ended without [DONE]]" });
+  // [DONE] alone (no finish_reason) is a normal end.
+  const g = fakeFetch([() => streamRes([delta({ content: "whole" }), sse("[DONE]")])]);
+  assert.equal((await runNim(g)).body, "whole");
+});
+
+test("nim stream: an error event after partial text keeps the text with a note; key redacted", async () => {
+  const f = fakeFetch([() => streamRes([delta({ content: "start" }), sse({ error: { message: `boom ${FAKE_KEY}` } })])]);
+  const r = await runNim(f);
+  assert.equal(r.ok, true);
+  assert.equal(r.degraded, undefined);
+  assert.equal(r.body, "start\n\n[truncated: stream error: boom nvapi-***]");
+});
+
+test("nim timeout: a perEngine/explicit timeoutSec cannot exceed 600; small explicit values pass through", async () => {
+  const timeout = async () => { throw Object.assign(new Error("aborted"), { name: "TimeoutError" }); };
+  const base = { prompt: "q", cwd: "/w", timeoutSec: 300, fetchImpl: timeout, env: envWithKey };
+  assert.match((await runSpec("nim", base, { nim: { timeoutSec: 999 } })).reason, /^timed out after 600s/);
+  assert.match((await runSpec("nim", base, { nim: { timeoutSec: 45 } })).reason, /^timed out after 45s/);
+  assert.match((await ENGINES.nim({ ...base, timeoutSec: 99999 })).reason, /^timed out after 600s/);
+});
+
+test("nim: JSON fallback maps timeout and undici errors instead of 'bad JSON'", async () => {
+  const brokenBody = (err) => () => new Response(new ReadableStream({ pull(c) { c.error(err); } }), { status: 200, headers: { "content-type": "application/json" } });
+  const r = await runNim(fakeFetch([brokenBody(timeoutErr())]), { timeoutSec: 8 });
+  assert.match(r.reason, /^timed out after 8s/);
+  const undici = Object.assign(new TypeError("terminated"), { cause: Object.assign(new Error("x"), { code: "UND_ERR_BODY_TIMEOUT" }) });
+  assert.match((await runNim(fakeFetch([brokenBody(undici)]))).reason, /^stream stalled, no data for ~300 s/);
+  const notJson = fakeFetch([() => new Response("<html>", { status: 200, headers: { "content-type": "text/html" } })]);
+  assert.match((await runNim(notJson)).reason, /^bad JSON/);
+});
+
+test("nim: the body of a second 429 is cancelled so the socket is released", async () => {
+  let cancelled = 0;
+  const mk = () => new Response(new ReadableStream({ pull() {}, cancel() { cancelled++; } }), { status: 429, headers: { "retry-after": "1" } });
+  const body429 = new Response("first", { status: 429, headers: { "retry-after": "1" } });
+  const f = fakeFetch([() => body429, mk]);
+  const r = await runNim(f, { timeoutSec: 30, sleep: sleeper() });
+  assert.match(r.reason, /after 1 retry/);
+  assert.equal(cancelled, 1);
+});
+
+test("nim stream: a cut-off stream with only reasoning keeps the truncation note on the reasoning-only body", async () => {
+  const f = fakeFetch([() => streamRes([delta({ reasoning_content: "mulling" })], { err: timeoutErr() })]);
+  const r = await runNim(f, { timeoutSec: 9 });
+  assert.equal(r.degraded, true);
+  assert.equal(r.body, "[reasoning only: model returned no final answer]\n\nmulling\n\n[truncated: timed out after 9s]");
 });

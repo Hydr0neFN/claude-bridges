@@ -13,7 +13,7 @@ import { runSpec } from "./lib/engines.js";
 import { parseArgs, parseOrderDetailed, resolvePrompt } from "./lib/args.js";
 import { runPanel, runChain, lastResortNote, formatSection, summaryLine, writeEngineResult, writeDone } from "./lib/panel.js";
 import { checkUpdates, spawnRefresh, settle, applyUpdates, formatFooter } from "./lib/updates.js";
-import { peekNimModels, refreshNimModels, formatNimNotice, orderUsesNim } from "./lib/nim-models.js";
+import { peekNimModels, refreshNimModels, formatNimNotice, nimNoticeGate, orderUsesNim } from "./lib/nim-models.js";
 
 const TIMEOUT_SEC = Number(process.env.CONSULT_TIMEOUT) || 300;
 
@@ -71,7 +71,9 @@ async function main() {
   const cwd = args.cwd || process.cwd();
   const mode = args.mode || (process.env.CONSULT_MODE === "first" ? "first" : "all");
   // Only runs that use nim see the NIM notice (cached view; a stale cache triggers a detached refresh).
-  const nimNotice = orderUsesNim(order) ? formatNimNotice(peekNimModels()) : null;
+  // The throttle is decided in finish(), right before printing: a run can take minutes, and parallel runs
+  // must see each other's shows.
+  const nimCache = orderUsesNim(order) ? peekNimModels() : null;
   const opts = {
     copilot: { model: args.copilotModel, effort: args.copilotEffort },
     codex: { model: args.codexModel, effort: args.codexEffort },
@@ -79,9 +81,15 @@ async function main() {
   };
   const run = (name) => runSpec(name, { prompt, cwd, timeoutSec: TIMEOUT_SEC }, opts);
 
+  // Resolves true once the stream has flushed `text` (a write to a closed pipe reports false).
+  const write = (stream, text) => new Promise((resolve) => stream.write(text, (err) => resolve(!err)));
   const finish = async (code) => {
-    const footer = [formatFooter(updates.items), nimNotice].filter(Boolean).join("\n");
-    if (footer) console.error(footer);
+    const nimGate = nimCache ? nimNoticeGate(nimCache) : null; // at most 3 shows a day (shared throttle file)
+    const footer = [formatFooter(updates.items), nimGate?.text].filter(Boolean).join("\n");
+    // Piped stdio can be asynchronous: drain stdout, then the footer, before exiting.
+    await write(process.stdout, "");
+    const written = footer ? await write(process.stderr, `${footer}\n`) : false;
+    if (written && nimGate?.text) nimGate.commit(); // only count a notice that was really delivered
     process.exit(code);
   };
 

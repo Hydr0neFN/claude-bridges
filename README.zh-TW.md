@@ -76,14 +76,30 @@ node consult-cli.js --order nim:moonshotai/kimi-k3,nim:z-ai/glm-5.3,codex "promp
 
 免費方案的延遲會因模型而有很大差異：在煙霧測試中，預設的 `nvidia/nemotron-3-ultra-550b-a55b` 約 20 秒就回答了一個小型審查 prompt，
 而其他部分模型要 150 秒，甚至在 180 秒時逾時。此外，NIM 的 `/v1/models` 會列出這把金鑰無法呼叫的模型
-（HTTP 404，`Function ... Not found for account`），因此請先試用再依賴。`CONSULT_TIMEOUT`（預設 300 秒）可限制慢速模型的等待時間。
+（HTTP 404，`Function ... Not found for account`），因此請先試用再依賴。`nim` 有自己的逾時設定，與 `CONSULT_TIMEOUT` 無關：`NIM_TIMEOUT` 秒（預設 600），上限固定為 600
+（10 分鐘；設得更大會被限制為 600，無效的值則回到 600）。各引擎是平行執行的，因此慢速模型只會拖慢它自己的區段。
+429 重試與此共用同一個期限。
+
+`nim` 請求採用串流（SSE）：consult 會累積增量內容（答案與推理），並組成與一般回覆相同的結果。約有兩個限制落在 300 秒：模型在該時間內仍未開始回答時，NVIDIA 的閘道會回傳真正的
+HTTP 504（顯示為 `NVIDIA gateway timeout ...`，不重試）；而 Node 的 `fetch` 在 300 秒內沒有收到回應標頭，
+或串流途中 300 秒沒有任何資料區塊（指區塊之間的閒置時間，而非總時間）時也會放棄（顯示為
+`no response headers within ~300 s` / `stream stalled, no data for ~300 s`，而不是 `fetch failed`）。簡言之：
+第一個 token 必須在約 300 秒內出現，之後整個串流可以持續到 `NIM_TIMEOUT`（最高 600 秒）。若不串流，整個答案都得在 300 秒內完成，
+因此超過 300 的 `NIM_TIMEOUT` 只對已經開始回答的模型有幫助；卡在免費方案佇列中的模型仍會在約 300 秒時失敗。若期限在串流途中到達，
+會回傳目前已收到的文字並附上 `[truncated: timed out after Ns]`（只有推理內容時以僅推理方式顯示；什麼都沒收到則為一般逾時）。
+非 `text/event-stream` 的回覆會當作一般完成結果解析。`deepseek` 不使用串流。HTTP 504 代表閘道等不到第一個 token 而放棄；HTTP 502 則顯示為一般的
+`NVIDIA gateway error (HTTP 502)` 並附上回應內容。兩者都不會重試。
+
+若 consult 是以 MCP `consult-bridge` 執行，其註冊需設定 `"timeout": 660000` 或更大，`nim` 才能用滿 10 分鐘（下方註冊範例已使用此值）。
+在 `--mode first` 中各引擎是依序執行，卡住的 `nim` 最多會拖住整條備援鏈 600 秒，`nim` 加上備援引擎可能超過 660 秒：
+請把 `nim` 放在順序的最後，或改用 `--mode all`（平行執行）。
 
 #### 每兩週一次的新模型檢查
 
 NIM 經常新增模型，因此只要存在 NIM 金鑰，使用到 `nim` 的 consult 執行（順序中含 `nim` 或 `nim:<model>`）
 最多每 14 天（`NIM_MODELS_CHECK_DAYS`）會在背景處理程序中檢查一次 `/v1/models`。成本是每 14 天一次 `/v1/models` 請求，
 不會呼叫任何模型。第一次檢查只會記錄基準；之後的檢查會把清單與先前看過的 ID 比對（嵌入、安全防護、語音等非對話模型會被忽略）。
-結果會以一行通知呈現，直到下一次檢查為止（`consult-cli` 輸出於 stderr；`consult-bridge` 每個伺服器處理程序附加一次於工具結果），例如
+結果會以一行通知呈現，直到下一次檢查為止（`consult-cli` 輸出於 stderr；`consult-bridge` 附加於工具結果），例如
 `[consult] NIM: 2 new models since 2026-10-10: a/b, c/d -> worth a look in a separate session; try --order nim:<id>`
 （最多列出 6 個 ID，其餘以 `(+K more)` 表示）。出現在清單中並不代表你的金鑰能呼叫該模型，或在免費方案上夠快，請視為參考提示。
 
@@ -91,6 +107,12 @@ NIM 經常新增模型，因此只要存在 NIM 金鑰，使用到 `nim` 的 con
   `{checkedAt, attemptAt, baselineAt, seen, new: [ids], error}`；其中絕不會包含金鑰。`checkedAt` 是最近一次成功取得清單的時間
   （失敗時不變），`attemptAt` 是最近一次嘗試的時間。當 `checkedAt` 已超過檢查間隔且 `attemptAt` 已超過一天時才會再次檢查，
   因此清單服務失敗時會每天重試，而不是等上兩週。
+- 通知節流：通知最多顯示 3 次，之後靜默一天（出現新的檢查結果則重新計算）。狀態存放在快取旁的 `nim-notice.json`，
+  格式為 `{key, count, windowStart, cooldownUntil}`，其中 `key` = `<checkedAt>:<以逗號串接的新 ID>`，且只有在通知實際
+  印出或附加時才會（以原子方式）寫入。所有使用端共用同一份狀態，包括遵循相同規則的外部 hook：`key` 不同就從零開始；
+  `now < cooldownUntil` 時保持靜默；若 `now - windowStart >= 24 小時`（或 `now < windowStart`，即時鐘被往回調）則重設 `count` 並令 `windowStart = now`；
+  接著 `count += 1`，當 `count >= 3` 時設定 `cooldownUntil = now + 24 小時`。檔案不存在或損毀視為「顯示」；
+  節流檔案的任何錯誤都不會中斷 consult 執行。
 - 以下兩個旗標不需要在順序中包含 `nim`。
 - `node consult-cli.js --check-nim-models` 立即強制檢查並印出通知（或 `no new models`）。
 - `node consult-cli.js --refresh-nim-models` 在處理程序內執行受節流限制的檢查，不輸出任何內容，只寫入快取
@@ -188,7 +210,7 @@ npm install
 ```powershell
 claude mcp add-json copilot-bridge  '{"command":"node","args":["C:/Users/YOU/claude-bridges/copilot-bridge/index.js"],"timeout":600000}' -s user
 claude mcp add-json codex-bridge    '{"command":"node","args":["C:/Users/YOU/claude-bridges/codex-bridge/index.js"],"timeout":600000}' -s user
-claude mcp add-json consult-bridge  '{"command":"node","args":["C:/Users/YOU/claude-bridges/consult-bridge/index.js"],"timeout":600000}' -s user
+claude mcp add-json consult-bridge  '{"command":"node","args":["C:/Users/YOU/claude-bridges/consult-bridge/index.js"],"timeout":660000}' -s user
 ```
 
 請將 `C:/Users/YOU` 替換為你的實際家目錄。這三個 CLI 都必須先完成驗證：
@@ -228,7 +250,7 @@ consult 小組的覆寫變數：`COPILOT_BRIDGE_BIN`、`CODEX_BRIDGE_BIN`、`AGY
 
 | 變數 | 預設值 | 說明 |
 |---|---|---|
-| `CONSULT_TIMEOUT` | `300` | 各引擎逾時時間（秒） |
+| `CONSULT_TIMEOUT` | `300` | 各引擎逾時時間（秒）（`nim` 不適用，請見 `NIM_TIMEOUT`） |
 | `CONSULT_MAX_OUTPUT_CHARS` | `50000` | 總輸出截斷上限字數 |
 | `CONSULT_PER_ENGINE_CHARS` | `20000` | `all` 模式下各引擎截斷字數 |
 | `CONSULT_ORDER` | `copilot,codex` | 預設引擎順序 |
@@ -247,6 +269,7 @@ consult 小組的覆寫變數：`COPILOT_BRIDGE_BIN`、`CODEX_BRIDGE_BIN`、`AGY
 | `NIM_MODEL` | `nvidia/nemotron-3-ultra-550b-a55b` | 順序項目與 `--nim-model` 都未指定時的預設 NIM 模型 |
 | `NIM_BASE` | `https://integrate.api.nvidia.com` | NIM API 基底 URL |
 | `NIM_MAX_TOKENS` | `8192` | 傳給 NIM 的 `max_tokens` |
+| `NIM_TIMEOUT` | `600` | NIM 逾時時間（正數，單位為秒），上限 600，不受 `CONSULT_TIMEOUT` 影響。MCP 註冊需設定 `"timeout": 660000` 或更大才能用滿 |
 | `NIM_MODELS_CHECK_DAYS` | `14` | NIM 新模型檢查的間隔（正數，單位為天） |
 
 ## 為什麼需要這個專案

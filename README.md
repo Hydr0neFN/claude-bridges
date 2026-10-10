@@ -79,7 +79,27 @@ retries once, then reports the engine as rate limited.
 Free-tier latency varies a lot by model: in a smoke test the default `nvidia/nemotron-3-ultra-550b-a55b` answered a
 small review prompt in about 20 s, while some other models took 150 s or timed out at 180 s. NIM's `/v1/models` also lists
 models this key cannot call (HTTP 404 `Function ... Not found for account`), so try a model before relying on it.
-`CONSULT_TIMEOUT` (default 300 s) bounds slow models.
+`nim` has its own timeout, independent of `CONSULT_TIMEOUT`: `NIM_TIMEOUT` seconds (default 600), always capped at 600
+(10 minutes; a larger value is clamped, an invalid one falls back to 600). Engines run in parallel, so a slow model only
+delays its own section. A 429 retry shares the same deadline.
+
+`nim` requests are streamed (SSE): consult accumulates the deltas (answer and reasoning) and builds the same result as a
+normal reply. Two limits sit at about 300 s: NVIDIA's gateway answers a real HTTP 504 (reported as
+`NVIDIA gateway timeout ...`, no retry) when a model has not started answering by then, and Node's `fetch` gives up after
+300 s without response headers or, mid-stream, without a data chunk (idle time between chunks, not total; reported as
+`no response headers within ~300 s` / `stream stalled, no data for ~300 s` instead of `fetch failed`). In short: time to
+first token must be at most about 300 s, and the whole stream may then run up to `NIM_TIMEOUT` (at most 600 s). Without
+streaming the entire answer would have to be finished within 300 s, so `NIM_TIMEOUT` above 300 only helps models that
+have started answering; a model stuck in the free-tier queue still fails at about 300 s. If the deadline hits mid-stream, the text received so far is returned with a
+`[truncated: timed out after Ns]` note (reasoning-only partials are shown as reasoning-only; nothing received is a plain
+timeout). A reply that is not `text/event-stream` is parsed as an ordinary completion. `deepseek` is not streamed. HTTP 504 means the
+gateway gave up waiting for the first token; HTTP 502 is reported as a plain `NVIDIA gateway error (HTTP 502)` with the
+response detail. Neither is retried.
+
+When consult runs as the MCP `consult-bridge`, its registration needs `"timeout": 660000` or more for `nim` to use the full
+10 minutes (the registration example below uses that value). In `--mode first` the engines run one after another, so a
+stalled `nim` holds up the chain for up to 600 s and `nim` plus a fallback can exceed 660 s: put `nim` last in the order,
+or use `--mode all` (parallel).
 
 #### Bi-weekly new-model check
 
@@ -88,7 +108,7 @@ NIM adds models often, so a consult run that uses `nim` (bare `nim` or `nim:<mod
 NIM key exists. The cost is one `/v1/models` request every 14 days; no model is ever called. The first check only
 records a baseline. Later checks diff the listing against the ids seen before (embedding, guard, speech and
 similar non-chat ids are ignored). The result is one notice line until the next check (on stderr in
-`consult-cli`, appended once per server process in `consult-bridge`), e.g.
+`consult-cli`, appended to the tool result in `consult-bridge`), e.g.
 `[consult] NIM: 2 new models since 2026-10-10: a/b, c/d -> worth a look in a separate session; try --order nim:<id>`
 (at most 6 ids, then `(+K more)`). A listing is not proof that a model is callable for your key or fast enough
 on the free tier, so treat it as a hint.
@@ -97,6 +117,13 @@ on the free tier, so treat it as a hint.
   `{checkedAt, attemptAt, baselineAt, seen, new: [ids], error}`; it never contains the key. `checkedAt` is the last
   successful listing (unchanged by a failure), `attemptAt` the last attempt. A check is due when `checkedAt` is older than
   the interval and `attemptAt` is older than one day, so a failing catalog is retried daily instead of waiting two weeks.
+- Notice throttle: the notice is shown at most 3 times, then stays silent for a day (a new check result starts over).
+  The state lives in `nim-notice.json` next to the cache, `{key, count, windowStart, cooldownUntil}` with
+  `key` = `<checkedAt>:<new ids joined by ,>`, and is written (atomically) only when the notice is actually printed
+  or appended. It is shared by every consumer, including external hooks that follow the same rule: if `key` differs,
+  start from zero; stay silent while `now < cooldownUntil`; if `now - windowStart >= 24 h` (or `now < windowStart`, a clock that moved back) reset `count` and set
+  `windowStart = now`; then `count += 1` and set `cooldownUntil = now + 24 h` once `count >= 3`. A missing or
+  corrupt file means "show"; throttle-file errors never break a consult run.
 - Both flags below work without `nim` in an order.
 - `node consult-cli.js --check-nim-models` forces a check now and prints the notice (or `no new models`).
 - `node consult-cli.js --refresh-nim-models` runs the throttled check in-process, silently, writing only the cache
@@ -194,7 +221,7 @@ A single `npm install` at the root serves all servers — Node resolves `node_mo
 ```powershell
 claude mcp add-json copilot-bridge  '{"command":"node","args":["C:/Users/YOU/claude-bridges/copilot-bridge/index.js"],"timeout":600000}' -s user
 claude mcp add-json codex-bridge    '{"command":"node","args":["C:/Users/YOU/claude-bridges/codex-bridge/index.js"],"timeout":600000}' -s user
-claude mcp add-json consult-bridge  '{"command":"node","args":["C:/Users/YOU/claude-bridges/consult-bridge/index.js"],"timeout":600000}' -s user
+claude mcp add-json consult-bridge  '{"command":"node","args":["C:/Users/YOU/claude-bridges/consult-bridge/index.js"],"timeout":660000}' -s user
 ```
 
 Replace `C:/Users/YOU` with your actual home directory. All three CLIs must be authenticated first:
@@ -234,7 +261,7 @@ Overrides for the consult panel: `COPILOT_BRIDGE_BIN`, `CODEX_BRIDGE_BIN`, `AGY_
 
 | Variable | Default | Description |
 |---|---|---|
-| `CONSULT_TIMEOUT` | `300` | Per-engine timeout in seconds |
+| `CONSULT_TIMEOUT` | `300` | Per-engine timeout in seconds (not used by `nim`, see `NIM_TIMEOUT`) |
 | `CONSULT_MAX_OUTPUT_CHARS` | `50000` | Total output truncation cap |
 | `CONSULT_PER_ENGINE_CHARS` | `20000` | Per-engine truncation in `all` mode |
 | `CONSULT_ORDER` | `copilot,codex` | Default engine order |
@@ -253,6 +280,7 @@ Overrides for the consult panel: `COPILOT_BRIDGE_BIN`, `CODEX_BRIDGE_BIN`, `AGY_
 | `NIM_MODEL` | `nvidia/nemotron-3-ultra-550b-a55b` | Default NIM model when neither the order entry nor `--nim-model` sets one |
 | `NIM_BASE` | `https://integrate.api.nvidia.com` | NIM API base URL |
 | `NIM_MAX_TOKENS` | `8192` | `max_tokens` sent to NIM |
+| `NIM_TIMEOUT` | `600` | NIM timeout in seconds (positive number); capped at 600, ignores `CONSULT_TIMEOUT`. MCP registrations need `"timeout": 660000` or more to use all of it |
 | `NIM_MODELS_CHECK_DAYS` | `14` | Interval of the NIM new-model check (positive number of days) |
 
 ## Why This Exists

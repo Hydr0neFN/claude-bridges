@@ -7,6 +7,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
   refreshNimModels, peekNimModels, formatNimNotice, nimTtlMs, nimCachePath, readNimCache, orderUsesNim, NIM_NON_CHAT_RE,
+  noticeAllowed, noticeKey, nimNoticeGate, nimNoticePath,
 } from "../lib/nim-models.js";
 
 // Built at runtime so no key-shaped literal lands in the repo.
@@ -243,4 +244,140 @@ test("cli --check-nim-models: no key exits 0 even when an older cache carries an
   const r = runCli(["--check-nim-models"], { NIM_KEY_PATH: path.join(c.dir, "no-such-key") }, c.dir);
   assert.equal(r.status, 0);
   assert.match(r.stdout, /no key configured/);
+});
+
+// --- notice throttle: 3 shows, then a 1-day cooldown, shared with an external hook ---
+
+const KEY = "1:a/b,c/d";
+
+test("noticeAllowed: shows at t=0,1,2, silent at 3 and day-1, shows again after the cooldown", () => {
+  const base = T0;
+  let state = null;
+  const seq = [0, 1, 2, 3, DAY - 1, DAY + 5, 2 * DAY + 10].map((dt) => {
+    const next = noticeAllowed(state, KEY, base + dt);
+    if (next) state = next;
+    return !!next;
+  });
+  // Same expectation as the Python hook: [T,T,T,F,F,T,T].
+  assert.deepEqual(seq, [true, true, true, false, false, true, true]);
+});
+
+test("noticeAllowed: states written and the cooldown boundary", () => {
+  const s1 = noticeAllowed(null, KEY, T0);
+  assert.deepEqual(s1, { key: KEY, count: 1, windowStart: T0, cooldownUntil: 0 });
+  const s2 = noticeAllowed(s1, KEY, T0 + 1);
+  const s3 = noticeAllowed(s2, KEY, T0 + 2);
+  assert.deepEqual(s3, { key: KEY, count: 3, windowStart: T0, cooldownUntil: T0 + 2 + DAY });
+  assert.equal(noticeAllowed(s3, KEY, T0 + 2 + DAY - 1), null);
+  const s4 = noticeAllowed(s3, KEY, T0 + 2 + DAY);
+  assert.deepEqual(s4, { key: KEY, count: 1, windowStart: T0 + 2 + DAY, cooldownUntil: 0 });
+});
+
+test("noticeAllowed: window rollover resets the count without a cooldown", () => {
+  const s = { key: KEY, count: 2, windowStart: 0, cooldownUntil: 0 };
+  assert.deepEqual(noticeAllowed(s, KEY, DAY), { key: KEY, count: 1, windowStart: DAY, cooldownUntil: 0 });
+  assert.equal(noticeAllowed(s, KEY, DAY - 1).count, 3);
+});
+
+test("noticeAllowed: a new key resets even during a cooldown; unusable state counts as none", () => {
+  const cooling = { key: KEY, count: 3, windowStart: 5, cooldownUntil: 5 + DAY };
+  assert.equal(noticeAllowed(cooling, KEY, 6), null);
+  assert.equal(noticeAllowed(cooling, "other", 6).count, 1);
+  for (const bad of [null, undefined, "x", 42, [], {}, { key: KEY, count: "a", windowStart: null, cooldownUntil: "z" }]) {
+    const n = noticeAllowed(bad, KEY, 100);
+    assert.equal(n.count, 1, JSON.stringify(bad));
+    assert.equal(n.key, KEY);
+  }
+});
+
+test("noticeKey: checkedAt plus comma-joined new ids", () => {
+  assert.equal(noticeKey({ checkedAt: 7, new: ["a/b", "c/d"] }), "7:a/b,c/d");
+  assert.equal(noticeKey({ checkedAt: 7, new: [] }), "7:");
+});
+
+test("nimNoticePath: next to the model cache", () => {
+  const env = { CLAUDE_BRIDGES_CACHE_DIR: "/cache" };
+  assert.equal(nimNoticePath(env, "/home"), path.join("/cache", "nim-notice.json"));
+  assert.equal(path.dirname(nimNoticePath(env, "/home")), path.dirname(nimCachePath(env, "/home")));
+});
+
+test("nimNoticeGate: nothing new -> no text, commit writes nothing", () => {
+  const c = ctx();
+  const file = path.join(c.dir, "nim-notice.json");
+  const g = nimNoticeGate({ checkedAt: T0, new: [] }, { file, now: T0 });
+  assert.equal(g.text, null);
+  g.commit();
+  assert.equal(fs.existsSync(file), false);
+});
+
+test("nimNoticeGate: state is written only on commit, 3 shows then silent, no stray tmp files", () => {
+  const c = ctx();
+  const file = path.join(c.dir, "nim-notice.json");
+  const cache = { checkedAt: T0, new: ["a/b", "c/d"] };
+  const g1 = nimNoticeGate(cache, { file, now: T0 });
+  assert.equal(g1.text, formatNimNotice(cache));
+  assert.equal(fs.existsSync(file), false, "deciding alone must not write");
+  g1.commit();
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")), {
+    key: noticeKey(cache), count: 1, windowStart: T0, cooldownUntil: 0,
+  });
+  // Decided but never printed (no commit): the count does not advance.
+  assert.ok(nimNoticeGate(cache, { file, now: T0 + 1 }).text);
+  assert.equal(JSON.parse(fs.readFileSync(file, "utf8")).count, 1);
+  nimNoticeGate(cache, { file, now: T0 + 1 }).commit();
+  nimNoticeGate(cache, { file, now: T0 + 2 }).commit();
+  assert.equal(JSON.parse(fs.readFileSync(file, "utf8")).cooldownUntil, T0 + 2 + DAY);
+  assert.equal(nimNoticeGate(cache, { file, now: T0 + 3 }).text, null);
+  assert.equal(nimNoticeGate(cache, { file, now: T0 + DAY - 1 }).text, null);
+  assert.ok(nimNoticeGate(cache, { file, now: T0 + 2 + DAY }).text);
+  // A new check result (new key) starts over.
+  assert.ok(nimNoticeGate({ checkedAt: T0 + 5, new: ["e/f"] }, { file, now: T0 + 3 }).text);
+  assert.deepEqual(fs.readdirSync(c.dir).filter((f) => f.endsWith(".tmp")), []);
+});
+
+test("nimNoticeGate: corrupt or unreadable throttle file fails open; unwritable path never throws", () => {
+  const c = ctx();
+  const file = path.join(c.dir, "nim-notice.json");
+  const cache = { checkedAt: T0, new: ["a/b"] };
+  fs.writeFileSync(file, "{not json");
+  const g = nimNoticeGate(cache, { file, now: T0 });
+  assert.ok(g.text);
+  g.commit();
+  assert.equal(JSON.parse(fs.readFileSync(file, "utf8")).count, 1);
+  fs.writeFileSync(file, "[1,2]");
+  assert.ok(nimNoticeGate(cache, { file, now: T0 }).text);
+  // The "file" is a directory: read fails (fail open) and the write is swallowed.
+  const asDir = path.join(c.dir, "dir");
+  fs.mkdirSync(asDir);
+  const g2 = nimNoticeGate(cache, { file: asDir, now: T0 });
+  assert.ok(g2.text);
+  assert.doesNotThrow(() => g2.commit());
+});
+
+test("noticeAllowed: a clock that moved back (now < windowStart) starts a fresh window", () => {
+  const s = { key: KEY, count: 2, windowStart: T0 + 10 * 1000, cooldownUntil: 0 };
+  assert.deepEqual(noticeAllowed(s, KEY, T0), { key: KEY, count: 1, windowStart: T0, cooldownUntil: 0 });
+});
+
+test("nimNoticeGate: commit re-reads the file, so runs decided on the same stale state do not lose updates", () => {
+  const c = ctx();
+  const file = path.join(c.dir, "nim-notice.json");
+  const cache = { checkedAt: T0, new: ["a/b"] };
+  const read = () => JSON.parse(fs.readFileSync(file, "utf8"));
+  // Five parallel runs all decide while the file is still empty ...
+  const gates = [1, 2, 3, 4, 5].map((i) => nimNoticeGate(cache, { file, now: T0 + i }));
+  assert.ok(gates.every((g) => g.text));
+  // ... and commit one after another (e.g. minutes later): counts accumulate instead of resetting to 1.
+  gates[0].commit();
+  assert.equal(read().count, 1);
+  gates[1].commit();
+  assert.equal(read().count, 2);
+  gates[2].commit();
+  assert.deepEqual(read(), { key: noticeKey(cache), count: 3, windowStart: T0 + 1, cooldownUntil: T0 + 3 + DAY });
+  // The remaining ones find the cooldown already in force and leave the state alone.
+  const before = fs.readFileSync(file, "utf8");
+  gates[3].commit();
+  gates[4].commit();
+  assert.equal(fs.readFileSync(file, "utf8"), before);
+  assert.equal(nimNoticeGate(cache, { file, now: T0 + 6 }).text, null);
 });
