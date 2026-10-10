@@ -15,7 +15,7 @@ flowchart TD
     C --> D["Claude Code: Sonnet 5 executes<br/>(Opus 4.8 advisor) → HANDOFF.md"]
     D --> E["Opus 4.6 reviews with me"]
     E --> F{"Cross-model review<br/>(consult-bridge)"}
-    F --> G["Gemini (agy-bridge)"]
+    F -.-> G["Gemini (agy-bridge)<br/>(paused)"]
     F --> H["GitHub Copilot CLI"]
     F --> I["OpenAI Codex CLI"]
     F -.-> J["Grok / others<br/>(planned, not yet wired)"]
@@ -31,18 +31,76 @@ This isn't "ask ChatGPT." Each model has a role, a sandbox, and a review gate. N
 
 ## What's Actually Wired
 
-The `consult` tool currently fans out to **four engines**:
+The `consult` tool currently fans out to **five engines**:
 
 | Engine | Wraps | Tier |
 |---|---|---|
 | `copilot` | GitHub Copilot CLI (`copilot -p`) | Free (GitHub) |
 | `codex` | OpenAI Codex CLI (`codex exec`) | Free (ChatGPT) |
-| `agy` | Antigravity / Gemini CLI | Paid (Gemini Pro/Flash) |
+| `agy` | Antigravity / Gemini CLI | Paid (Gemini Pro/Flash); **paused (not in default order)** |
 | `deepseek` | `deeperseeker` proxy over a DeepSeek web account (HTTP, not a CLI) | Free (throwaway account) |
+| `nim` | NVIDIA NIM hosted API (HTTP, not a CLI) | Free trial tier |
 
-`deepseek` is opt-in: it is not in the default `CONSULT_ORDER`, so pass `--order ...,deepseek`
-or set `CONSULT_ORDER` to include it. Unlike the CLI engines it gets no cwd, shell or file
-access — it only ever sees the prompt text, so give it self-contained prompts.
+`agy` is paused (Student re-verification pending): the code is kept and it can still be forced with
+`--order agy` or the MCP `order` argument; restore it by adding it back to the default order.
+
+`deepseek` and `nim` are opt-in: they are not in the default `CONSULT_ORDER`, so pass
+`--order ...,nim` or set `CONSULT_ORDER` to include them. Unlike the CLI engines they get no cwd,
+shell or file access — they only ever see the prompt text, so give them self-contained prompts.
+
+### `nim` (NVIDIA NIM)
+
+Set up the key once: put it in `~/.nvidia-nim-key` (restrict it: `chmod 600` on macOS/Linux; on
+Windows rely on your user-profile ACL) or export `NIM_API_KEY`. The environment variable wins.
+
+Order entries may be `engine` or `engine:model` (split on the first `:`, so model ids with `/` work).
+A model is accepted on `copilot`, `codex`, `nim` and `deepseek`; `agy:x` and unknown engines are dropped.
+(`copilot:<model>` is accepted syntactically, but auto-only Copilot plans reject `--model`; the engine then retries once on auto
+and labels the result `copilot (auto; <model> unavailable on this plan)`.) `nim:<default model>` is the same entry as bare `nim`
+and is deduplicated.
+This lets one panel query several NIM models, each labelled `nim:<model>`:
+
+```bash
+node consult-cli.js --order nim:moonshotai/kimi-k3,nim:z-ai/glm-5.3,codex "prompt"
+```
+
+Model precedence for `nim`: `engine:model` in the order, then `--nim-model`, then `NIM_MODEL`, then the built-in default.
+If a model returns only reasoning and no final answer, the section starts with `[reasoning only: ...]`;
+a `[truncated: hit max_tokens]` line marks cut-off answers (raise `NIM_MAX_TOKENS`); a truncated answer still counts as an answer.
+Only a reasoning-only reply is shown in `--mode all` but fails over in `--mode first`, where the chain moves on to the next engine
+(if every engine returns reasoning only, the first such reply is shown as a last resort with a note). Only a `<think>` block at the
+very start of a reply is treated as reasoning; tags quoted later in an answer are left alone.
+
+Free trial keys allow roughly 40 requests per minute; NVIDIA does not publish the limits and they may change.
+Use is subject to the NVIDIA API Trial Terms (evaluation, non-production use). The budget is per key, so any
+other application using the same key shares it. On HTTP 429 consult waits (`Retry-After`, else 5 s, max 15 s),
+retries once, then reports the engine as rate limited.
+
+Free-tier latency varies a lot by model: in a smoke test the default `nvidia/nemotron-3-ultra-550b-a55b` answered a
+small review prompt in about 20 s, while some other models took 150 s or timed out at 180 s. NIM's `/v1/models` also lists
+models this key cannot call (HTTP 404 `Function ... Not found for account`), so try a model before relying on it.
+`CONSULT_TIMEOUT` (default 300 s) bounds slow models.
+
+#### Bi-weekly new-model check
+
+NIM adds models often, so a consult run that uses `nim` (bare `nim` or `nim:<model>` in the order) checks
+`/v1/models` at most once every 14 days (`NIM_MODELS_CHECK_DAYS`), in a detached background process, whenever a
+NIM key exists. The cost is one `/v1/models` request every 14 days; no model is ever called. The first check only
+records a baseline. Later checks diff the listing against the ids seen before (embedding, guard, speech and
+similar non-chat ids are ignored). The result is one notice line until the next check (on stderr in
+`consult-cli`, appended once per server process in `consult-bridge`), e.g.
+`[consult] NIM: 2 new models since 2026-10-10: a/b, c/d -> worth a look in a separate session; try --order nim:<id>`
+(at most 6 ids, then `(+K more)`). A listing is not proof that a model is callable for your key or fast enough
+on the free tier, so treat it as a hint.
+
+- Result cache: `~/.cache/claude-bridges/nim-models.json` (or `$CLAUDE_BRIDGES_CACHE_DIR/nim-models.json`), shape
+  `{checkedAt, attemptAt, baselineAt, seen, new: [ids], error}`; it never contains the key. `checkedAt` is the last
+  successful listing (unchanged by a failure), `attemptAt` the last attempt. A check is due when `checkedAt` is older than
+  the interval and `attemptAt` is older than one day, so a failing catalog is retried daily instead of waiting two weeks.
+- Both flags below work without `nim` in an order.
+- `node consult-cli.js --check-nim-models` forces a check now and prints the notice (or `no new models`).
+- `node consult-cli.js --refresh-nim-models` runs the throttled check in-process, silently, writing only the cache
+  (this is what the detached background refresh and external hooks call).
 
 Grok and others are in the aspirational loop but don't have bridges yet. The system is designed to add engines — each is ~30 lines in `lib/engines.js`.
 
@@ -91,11 +149,11 @@ Consult a panel of external models. Two modes:
 consult({
   prompt: "Review this auth middleware for timing attacks",
   mode: "all",           // "all" | "first"
-  order: ["copilot", "codex", "agy"]  // engine set/chain order
+  order: ["copilot", "codex"]  // engine set/chain order
 })
 ```
 
-Engine order configurable via `order` arg or `CONSULT_ORDER` env (default `copilot,codex,agy`). A failed engine (quota, auth, timeout, empty output, nonzero exit) fails over to the next; the trail is appended to the result.
+Engine order configurable via `order` arg or `CONSULT_ORDER` env (default `copilot,codex`); both accept `engine:model` entries (the MCP `order` is a list of strings; invalid entries are ignored and reported, and an order with no valid entry is an error). A failed engine (quota, auth, timeout, empty output, nonzero exit) fails over to the next; the trail is appended to the result.
 
 ### `copilot_exec`
 
@@ -110,7 +168,10 @@ Delegate to OpenAI Codex CLI via `codex exec`. Sandboxed read-only by default. P
 ```bash
 node consult-cli.js --mode all --order copilot,codex "prompt"
 node consult-cli.js --copilot-model M --copilot-effort high --codex-model M --codex-effort low "prompt"
-node consult-cli.js --out-dir /tmp/c "prompt"   # also write <dir>/<engine>.md as each engine settles, <dir>/_done at the end
+node consult-cli.js --nim-model M "prompt"       # model for the nim engine (an order entry nim:M wins over this)
+node consult-cli.js --check-nim-models         # force the NIM new-model check now
+node consult-cli.js --prompt-file review.txt   # prompt from a file ("-" = stdin); not combinable with prompt words. Use it for long prompts such as a diff, which can exceed the OS command-line limit
+node consult-cli.js --out-dir /tmp/c "prompt"   # also write <dir>/<engine>.md as each engine settles, <dir>/_done at the end (unsafe filename characters such as : and / become _)
 node consult-cli.js --check-updates   # force a check now, print the result, exit
 node consult-cli.js --update          # brew upgrade --cask <outdated CLIs>; git pull --ff-only (refuses on a dirty repo)
 ```
@@ -176,7 +237,7 @@ Overrides for the consult panel: `COPILOT_BRIDGE_BIN`, `CODEX_BRIDGE_BIN`, `AGY_
 | `CONSULT_TIMEOUT` | `300` | Per-engine timeout in seconds |
 | `CONSULT_MAX_OUTPUT_CHARS` | `50000` | Total output truncation cap |
 | `CONSULT_PER_ENGINE_CHARS` | `20000` | Per-engine truncation in `all` mode |
-| `CONSULT_ORDER` | `copilot,codex,agy` | Default engine order |
+| `CONSULT_ORDER` | `copilot,codex` | Default engine order |
 | `CONSULT_MODE` | `all` | Default mode (`all` or `first`) |
 | `COPILOT_MODEL` | (unset = auto) | Passed as `--model` only when set. If Copilot rejects it (auto-only plans such as Student), retried once on auto and labelled `copilot (auto; <model> unavailable on this plan)` |
 | `COPILOT_EFFORT` | (unset) | `--reasoning-effort none\|minimal\|low\|medium\|high\|xhigh\|max` |
@@ -187,6 +248,12 @@ Overrides for the consult panel: `COPILOT_BRIDGE_BIN`, `CODEX_BRIDGE_BIN`, `AGY_
 | `DEEPSEEKER_MODEL` | `v4.1flash` | Model id passed to the proxy |
 | `DEEPSEEKER_API_KEY` | (read from proxy `.env`) | Proxy API key; falls back to `DEEPSEEKER_ENV_PATH` |
 | `DEEPSEEKER_ENV_PATH` | `~/Claude/deeperseeker/.env` | Where to read the key from when the env var is unset |
+| `NIM_API_KEY` | (unset) | NVIDIA NIM key; takes precedence over the key file |
+| `NIM_KEY_PATH` | `~/.nvidia-nim-key` | Key file read when `NIM_API_KEY` is unset |
+| `NIM_MODEL` | `nvidia/nemotron-3-ultra-550b-a55b` | Default NIM model when neither the order entry nor `--nim-model` sets one |
+| `NIM_BASE` | `https://integrate.api.nvidia.com` | NIM API base URL |
+| `NIM_MAX_TOKENS` | `8192` | `max_tokens` sent to NIM |
+| `NIM_MODELS_CHECK_DAYS` | `14` | Interval of the NIM new-model check (positive number of days) |
 
 ## Why This Exists
 

@@ -1,5 +1,7 @@
 # Delegation rules: agy-bridge
 
+> **Dormant since 2026-10-10:** not registered as an MCP while agy is paused (Student re-verification). This copy is kept for the restore.
+
 You have agy-bridge MCP tools that delegate heavy work to the Antigravity CLI
 (Gemini). Delegation keeps large content OUT of your context — only answers
 come back. Prefer delegating over doing it yourself when:

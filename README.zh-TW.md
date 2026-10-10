@@ -15,7 +15,7 @@ flowchart TD
     C --> D["Claude Code: Sonnet 5 executes<br/>(Opus 4.8 advisor) → HANDOFF.md"]
     D --> E["Opus 4.6 reviews with me"]
     E --> F{"Cross-model review<br/>(consult-bridge)"}
-    F --> G["Gemini (agy-bridge)"]
+    F -.-> G["Gemini (agy-bridge)<br/>(paused)"]
     F --> H["GitHub Copilot CLI"]
     F --> I["OpenAI Codex CLI"]
     F -.-> J["Grok / others<br/>(planned, not yet wired)"]
@@ -31,18 +31,70 @@ flowchart TD
 
 ## 實際接通的引擎
 
-`consult` 工具目前會扇出至**四個引擎**：
+`consult` 工具目前會扇出至**五個引擎**：
 
 | Engine | Wraps | Tier |
 |---|---|---|
 | `copilot` | GitHub Copilot CLI (`copilot -p`) | Free (GitHub) |
 | `codex` | OpenAI Codex CLI (`codex exec`) | Free (ChatGPT) |
-| `agy` | Antigravity / Gemini CLI | Paid (Gemini Pro/Flash) |
+| `agy` | Antigravity / Gemini CLI | Paid (Gemini Pro/Flash)；**已暫停（不在預設順序中）** |
 | `deepseek` | 以 `deeperseeker` proxy 代理 DeepSeek 網頁帳號（HTTP，非 CLI） | Free（拋棄式帳號） |
+| `nim` | NVIDIA NIM 託管 API（HTTP，非 CLI） | Free（試用方案） |
 
-`deepseek` 採選用制：不在預設的 `CONSULT_ORDER` 之中，須以 `--order ...,deepseek` 指定，
-或將其寫入 `CONSULT_ORDER`。與其他 CLI 引擎不同，它沒有 cwd、shell 或檔案存取權限 ——
-只看得到 prompt 文字本身，因此送給它的 prompt 必須自帶完整脈絡。
+`agy` 目前已暫停（等待學生身分重新驗證）：程式碼仍保留，仍可用 `--order agy` 或 MCP 的 `order` 引數強制指定；
+要恢復時，只需將它加回預設順序。
+
+`deepseek` 與 `nim` 採選用制：不在預設的 `CONSULT_ORDER` 之中，須以 `--order ...,nim` 指定，
+或將其寫入 `CONSULT_ORDER`。與其他 CLI 引擎不同，它們沒有 cwd、shell 或檔案存取權限 ——
+只看得到 prompt 文字本身，因此送給它們的 prompt 必須自帶完整脈絡。
+
+### `nim`（NVIDIA NIM）
+
+金鑰只需設定一次：放進 `~/.nvidia-nim-key`（請限制權限：macOS/Linux 使用 `chmod 600`；
+Windows 則依賴使用者設定檔的 ACL），或設定環境變數 `NIM_API_KEY`（環境變數優先）。
+
+順序中的項目可寫成 `engine` 或 `engine:model`（只以第一個 `:` 切分，因此含 `/` 的模型 ID 可正常使用）。
+`copilot`、`codex`、`nim`、`deepseek` 支援指定模型；`agy:x` 與未知引擎會被忽略。
+（`copilot:<model>` 在語法上可接受，但僅支援自動選模型的 Copilot 方案會拒絕 `--model`；此時引擎會改用自動模式重試一次，
+並將結果標示為 `copilot (auto; <model> unavailable on this plan)`。）`nim:<預設模型>` 與單獨的 `nim` 視為同一項目，會去除重複。
+如此一次諮詢即可同時詢問多個 NIM 模型，結果會標示為 `nim:<model>`：
+
+```bash
+node consult-cli.js --order nim:moonshotai/kimi-k3,nim:z-ai/glm-5.3,codex "prompt"
+```
+
+`nim` 的模型優先順序：順序中的 `engine:model`，其次 `--nim-model`，再其次 `NIM_MODEL`，最後是內建預設值。
+若模型只回傳推理過程而沒有最終答案，該段會以 `[reasoning only: ...]` 開頭；
+回答被截斷時會附上 `[truncated: hit max_tokens]`（可調高 `NIM_MAX_TOKENS`），被截斷的回答仍視為有效回答。
+只有「僅含推理過程」的回覆在 `--mode all` 中仍會顯示，但在 `--mode first` 中視為失敗，會改由下一個引擎接手
+（若所有引擎都只回傳推理過程，則以第一個此類回覆作為最後手段顯示，並附上說明）。只有回覆最開頭的 `<think>` 區塊會被當作推理過程；回答中途引用的標籤不會被處理。
+
+免費試用金鑰的上限約為每分鐘 40 個請求；NVIDIA 並未公開限制，且可能隨時調整。
+使用須遵守 NVIDIA API Trial Terms（僅限評估、非正式環境用途）。額度以金鑰為單位，
+因此任何使用同一把金鑰的其他應用程式都會共用這份額度。收到 HTTP 429 時，consult 會等待
+（依 `Retry-After`，否則 5 秒，最長 15 秒）並重試一次，仍失敗則回報該引擎受到速率限制。
+
+免費方案的延遲會因模型而有很大差異：在煙霧測試中，預設的 `nvidia/nemotron-3-ultra-550b-a55b` 約 20 秒就回答了一個小型審查 prompt，
+而其他部分模型要 150 秒，甚至在 180 秒時逾時。此外，NIM 的 `/v1/models` 會列出這把金鑰無法呼叫的模型
+（HTTP 404，`Function ... Not found for account`），因此請先試用再依賴。`CONSULT_TIMEOUT`（預設 300 秒）可限制慢速模型的等待時間。
+
+#### 每兩週一次的新模型檢查
+
+NIM 經常新增模型，因此只要存在 NIM 金鑰，使用到 `nim` 的 consult 執行（順序中含 `nim` 或 `nim:<model>`）
+最多每 14 天（`NIM_MODELS_CHECK_DAYS`）會在背景處理程序中檢查一次 `/v1/models`。成本是每 14 天一次 `/v1/models` 請求，
+不會呼叫任何模型。第一次檢查只會記錄基準；之後的檢查會把清單與先前看過的 ID 比對（嵌入、安全防護、語音等非對話模型會被忽略）。
+結果會以一行通知呈現，直到下一次檢查為止（`consult-cli` 輸出於 stderr；`consult-bridge` 每個伺服器處理程序附加一次於工具結果），例如
+`[consult] NIM: 2 new models since 2026-10-10: a/b, c/d -> worth a look in a separate session; try --order nim:<id>`
+（最多列出 6 個 ID，其餘以 `(+K more)` 表示）。出現在清單中並不代表你的金鑰能呼叫該模型，或在免費方案上夠快，請視為參考提示。
+
+- 結果快取：`~/.cache/claude-bridges/nim-models.json`（或 `$CLAUDE_BRIDGES_CACHE_DIR/nim-models.json`），格式為
+  `{checkedAt, attemptAt, baselineAt, seen, new: [ids], error}`；其中絕不會包含金鑰。`checkedAt` 是最近一次成功取得清單的時間
+  （失敗時不變），`attemptAt` 是最近一次嘗試的時間。當 `checkedAt` 已超過檢查間隔且 `attemptAt` 已超過一天時才會再次檢查，
+  因此清單服務失敗時會每天重試，而不是等上兩週。
+- 以下兩個旗標不需要在順序中包含 `nim`。
+- `node consult-cli.js --check-nim-models` 立即強制檢查並印出通知（或 `no new models`）。
+- `node consult-cli.js --refresh-nim-models` 在處理程序內執行受節流限制的檢查，不輸出任何內容，只寫入快取
+  （背景的分離式更新與外部 hook 都是呼叫此旗標）。
 
 Grok 與其他模型已列入構想循環中，但尚未建立 bridge。本系統設計具備擴充引擎的能力 —— 每個引擎在 `lib/engines.js` 中僅需約 30 行程式碼。
 
@@ -91,11 +143,11 @@ claude-bridges/
 consult({
   prompt: "Review this auth middleware for timing attacks",
   mode: "all",           // "all" | "first"
-  order: ["copilot", "codex", "agy"]  // engine set/chain order
+  order: ["copilot", "codex"]  // engine set/chain order
 })
 ```
 
-引擎順序可透過 `order` 引數或 `CONSULT_ORDER` 環境變數設定（預設為 `copilot,codex,agy`）。失敗的引擎（配額耗盡、驗證失敗、逾時、輸出為空、非零結束代碼）會自動容錯移轉至下一個引擎；相關歷程紀錄會附加於結果之後。
+引擎順序可透過 `order` 引數或 `CONSULT_ORDER` 環境變數設定（預設為 `copilot,codex`；`order` 與 `CONSULT_ORDER` 的項目都可寫成 `engine:model`；MCP 的 `order` 是字串陣列，無效的項目會被忽略並回報，若沒有任何有效項目則回傳錯誤）。失敗的引擎（配額耗盡、驗證失敗、逾時、輸出為空、非零結束代碼）會自動容錯移轉至下一個引擎；相關歷程紀錄會附加於結果之後。
 
 ### `copilot_exec`
 
@@ -110,7 +162,10 @@ consult({
 ```bash
 node consult-cli.js --mode all --order copilot,codex "prompt"
 node consult-cli.js --copilot-model M --copilot-effort high --codex-model M --codex-effort low "prompt"
-node consult-cli.js --out-dir /tmp/c "prompt"   # 每個引擎完成時即寫入 <dir>/<engine>.md，全部完成後寫入 <dir>/_done
+node consult-cli.js --nim-model M "prompt"       # 指定 nim 引擎的模型（順序中的 nim:M 優先於此旗標）
+node consult-cli.js --check-nim-models         # 立即強制執行 NIM 新模型檢查
+node consult-cli.js --prompt-file review.txt   # 從檔案讀取 prompt（"-" 代表標準輸入），不可與 prompt 文字並用。適用於 diff 等長 prompt，避免超出作業系統的命令列長度上限
+node consult-cli.js --out-dir /tmp/c "prompt"   # 每個引擎完成時即寫入 <dir>/<engine>.md，全部完成後寫入 <dir>/_done（檔名中的 : 與 / 等不安全字元會改為 _）
 node consult-cli.js --check-updates   # 立即檢查、印出結果後結束
 node consult-cli.js --update          # brew upgrade --cask <過期的 CLI>；git pull --ff-only（工作樹有未提交變更時拒絕）
 ```
@@ -176,7 +231,7 @@ consult 小組的覆寫變數：`COPILOT_BRIDGE_BIN`、`CODEX_BRIDGE_BIN`、`AGY
 | `CONSULT_TIMEOUT` | `300` | 各引擎逾時時間（秒） |
 | `CONSULT_MAX_OUTPUT_CHARS` | `50000` | 總輸出截斷上限字數 |
 | `CONSULT_PER_ENGINE_CHARS` | `20000` | `all` 模式下各引擎截斷字數 |
-| `CONSULT_ORDER` | `copilot,codex,agy` | 預設引擎順序 |
+| `CONSULT_ORDER` | `copilot,codex` | 預設引擎順序 |
 | `CONSULT_MODE` | `all` | 預設模式（`all` 或 `first`） |
 | `COPILOT_MODEL` | （未設 = auto） | 僅在設定時以 `--model` 傳入。若 Copilot 拒絕（如 Student 方案僅支援 auto），會改用 auto 重試一次並標示為 `copilot (auto; <model> unavailable on this plan)` |
 | `COPILOT_EFFORT` | （未設） | `--reasoning-effort none\|minimal\|low\|medium\|high\|xhigh\|max` |
@@ -187,6 +242,12 @@ consult 小組的覆寫變數：`COPILOT_BRIDGE_BIN`、`CODEX_BRIDGE_BIN`、`AGY
 | `DEEPSEEKER_MODEL` | `v4.1flash` | 傳給 proxy 的 model id |
 | `DEEPSEEKER_API_KEY` | （從 proxy `.env` 讀取） | Proxy API key，未設時回退至 `DEEPSEEKER_ENV_PATH` |
 | `DEEPSEEKER_ENV_PATH` | `~/Claude/deeperseeker/.env` | 環境變數未設時，從何處讀取金鑰 |
+| `NIM_API_KEY` | （未設定） | NVIDIA NIM 金鑰，優先於金鑰檔案 |
+| `NIM_KEY_PATH` | `~/.nvidia-nim-key` | 未設 `NIM_API_KEY` 時讀取的金鑰檔案 |
+| `NIM_MODEL` | `nvidia/nemotron-3-ultra-550b-a55b` | 順序項目與 `--nim-model` 都未指定時的預設 NIM 模型 |
+| `NIM_BASE` | `https://integrate.api.nvidia.com` | NIM API 基底 URL |
+| `NIM_MAX_TOKENS` | `8192` | 傳給 NIM 的 `max_tokens` |
+| `NIM_MODELS_CHECK_DAYS` | `14` | NIM 新模型檢查的間隔（正數，單位為天） |
 
 ## 為什麼需要這個專案
 

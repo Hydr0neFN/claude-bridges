@@ -1,3 +1,5 @@
+> **Dormant since 2026-10-10:** not registered as an MCP while agy is paused (Student re-verification). This copy is kept for the restore.
+
 <div align="center">
 
 # agy-bridge

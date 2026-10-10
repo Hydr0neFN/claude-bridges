@@ -3,6 +3,8 @@ name: agy-delegation
 description: Use when analyzing large files (>200 lines), more than 3 files at once, deep git/grep searches, web lookups, or adversarial reviews - delegates to the Antigravity CLI via agy-bridge MCP tools to save context.
 ---
 
+> **Dormant since 2026-10-10:** not registered as an MCP while agy is paused (Student re-verification). This copy is kept for the restore.
+
 # Delegating to Antigravity CLI
 
 Use the agy-bridge MCP tools instead of doing heavy work yourself:

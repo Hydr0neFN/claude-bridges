@@ -4,20 +4,33 @@
 // context floor and can be left dangling by tool-search deferral; as a CLI it
 // costs nothing until called. Shares lib/engines.js with the MCP version.
 //
-// Usage: consult "<prompt>" [--mode all|first] [--order copilot,codex,agy] [--cwd <dir>] [--out-dir <dir>]
-//        [--copilot-model M] [--copilot-effort E] [--codex-model M] [--codex-effort E]
-//        consult --check-updates | --update
+// Usage: consult "<prompt>" | --prompt-file <path|-> [--mode all|first] [--order copilot,codex] [--cwd <dir>] [--out-dir <dir>]
+//        [--copilot-model M] [--copilot-effort E] [--codex-model M] [--codex-effort E] [--nim-model M]
+//        --order entries are `engine` or `engine:model`, e.g. nim:moonshotai/kimi-k3,codex (model wins over the flags)
+//        consult --check-updates | --update | --check-nim-models | --refresh-nim-models
 
-import { ENGINES } from "./lib/engines.js";
-import { parseArgs, parseOrder } from "./lib/args.js";
-import { runPanel, formatSection, summaryLine, writeEngineResult, writeDone } from "./lib/panel.js";
+import { runSpec } from "./lib/engines.js";
+import { parseArgs, parseOrderDetailed, resolvePrompt } from "./lib/args.js";
+import { runPanel, runChain, lastResortNote, formatSection, summaryLine, writeEngineResult, writeDone } from "./lib/panel.js";
 import { checkUpdates, spawnRefresh, settle, applyUpdates, formatFooter } from "./lib/updates.js";
+import { peekNimModels, refreshNimModels, formatNimNotice, orderUsesNim } from "./lib/nim-models.js";
 
 const TIMEOUT_SEC = Number(process.env.CONSULT_TIMEOUT) || 300;
 
 const args = parseArgs(process.argv.slice(2));
 
-if (args.checkUpdates || args.update) {
+if (args.refreshNimModels) {
+  // Detached-refresh entry point (also for external hooks): throttled, silent, writes only the cache.
+  await refreshNimModels().catch(() => {});
+  process.exit(0);
+} else if (args.checkNimModels) {
+  const { skipped, cache } = await refreshNimModels({ force: true });
+  if (skipped === "no key") console.log("[consult] NIM: no key configured (env NIM_API_KEY or ~/.nvidia-nim-key), check skipped");
+  else if (cache?.error) console.log(`[consult] NIM: check failed: ${cache.error}`);
+  else console.log(formatNimNotice(cache) || `[consult] NIM: no new models (${cache?.seen.length ?? 0} known)`);
+  // Only a listing failure in THIS run is an error; a stale error in the cache must not fail a no-key run.
+  process.exit(skipped === null && cache?.error ? 1 : 0);
+} else if (args.checkUpdates || args.update) {
   const { items } = await settle(checkUpdates({ force: true }), 60000);
   if (args.update) {
     const { log, failed } = await applyUpdates({ items });
@@ -31,41 +44,54 @@ if (args.checkUpdates || args.update) {
 }
 
 async function main() {
-  const prompt = args.prompt.join(" ").trim();
+  let prompt;
+  try {
+    prompt = resolvePrompt(args);
+  } catch (e) {
+    console.error(`consult: ${e.message}`);
+    process.exit(2);
+  }
   if (!prompt) {
-    console.error('usage: consult "<prompt>" [--mode all|first] [--order copilot,codex,agy] [--cwd <dir>] [--out-dir <dir>] | --check-updates | --update');
+    console.error('usage: consult "<prompt>" | --prompt-file <path|-> [--mode all|first] [--order copilot,codex] [--cwd <dir>] [--out-dir <dir>] [--nim-model M] | --check-updates | --update | --check-nim-models');
     process.exit(2);
   }
 
-  
+  const { order, dropped } = parseOrderDetailed(args.order || process.env.CONSULT_ORDER, undefined, {
+    nimModel: args.nimModel || process.env.NIM_MODEL,
+  });
+  if (dropped.length) console.error(`consult: ignoring invalid order entries: ${dropped.join(", ")}`);
+  if (!order.length) {
+    console.error("consult: no valid engine in the order (use engine or engine:model; a model only on copilot, codex, nim, deepseek)");
+    process.exit(2);
+  }
+
   // A stale cache is refreshed by a detached child; the footer only ever uses the cached result.
   const updates = checkUpdates({ detach: spawnRefresh });
 
   const cwd = args.cwd || process.cwd();
   const mode = args.mode || (process.env.CONSULT_MODE === "first" ? "first" : "all");
-  const order = parseOrder(args.order || process.env.CONSULT_ORDER);
+  // Only runs that use nim see the NIM notice (cached view; a stale cache triggers a detached refresh).
+  const nimNotice = orderUsesNim(order) ? formatNimNotice(peekNimModels()) : null;
   const opts = {
     copilot: { model: args.copilotModel, effort: args.copilotEffort },
     codex: { model: args.codexModel, effort: args.codexEffort },
+    nim: { model: args.nimModel },
   };
-  const run = (name) => ENGINES[name]({ prompt, cwd, timeoutSec: TIMEOUT_SEC, ...opts[name] });
+  const run = (name) => runSpec(name, { prompt, cwd, timeoutSec: TIMEOUT_SEC }, opts);
 
   const finish = async (code) => {
-    const footer = formatFooter(updates.items);
+    const footer = [formatFooter(updates.items), nimNotice].filter(Boolean).join("\n");
     if (footer) console.error(footer);
     process.exit(code);
   };
 
   if (mode === "first") {
-    const trail = [];
-    for (const name of order) {
-      const r = await run(name);
-      if (r.ok) {
-        console.log(r.body);
-        console.log(`\n---\n[consult] mode: first | engine: ${r.engine}${trail.length ? ` | failover: ${trail.join("; ")}` : ""}`);
-        return finish(0);
-      }
-      trail.push(`${r.engine}: ${r.reason}`);
+    const { result: r, trail } = await runChain(order, run);
+    if (r) {
+      console.log(r.body);
+      const note = lastResortNote(r);
+      console.log(`\n---\n[consult] mode: first | engine: ${r.engine}${trail.length ? ` | failover: ${trail.join("; ")}` : ""}${note ? ` | note: ${note}` : ""}`);
+      return finish(0);
     }
     console.error(`consult: all engines failed.\n${trail.map((t) => `- ${t}`).join("\n")}`);
     return finish(1);

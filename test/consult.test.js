@@ -25,7 +25,7 @@ test("parseArgs: flags, prompt words, update flags", () => {
 
 test("parseOrder: filters unknown engines, applies default", () => {
   assert.deepEqual(parseOrder("copilot, nope ,codex"), ["copilot", "codex"]);
-  assert.deepEqual(parseOrder(undefined), ["copilot", "codex", "agy"]);
+  assert.deepEqual(parseOrder(undefined), ["copilot", "codex"]);
 });
 
 test("searchDirs: extra dirs only off win32", () => {
