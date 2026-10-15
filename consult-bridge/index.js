@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // consult-bridge: one tool, `consult`, over a panel of consultant CLIs
-// (copilot, codex; agy is paused, see lib/engines.js). Default mode "all" runs every engine in parallel and
+// (copilot, codex, deepseek by default; agy and nim are opt-in, see lib/engines.js). Default mode "all" runs every engine in parallel and
 // returns each successful answer labeled by engine — rationale: the engines sit
 // on different plan tiers (agy = paid Gemini Pro, others free), so first-come-
 // first-serve would systematically prefer the weakest agent. Mode "first" keeps
@@ -22,7 +22,7 @@ const NIM_OPTS = () => ({ nimModel: process.env.NIM_MODEL }); // what a bare `ni
 
 function defaultOrder() {
   const raw = parseOrder(process.env.CONSULT_ORDER, undefined, NIM_OPTS());
-  return raw.length ? raw : ["copilot", "codex"];
+  return raw.length ? raw : ["copilot", "codex", "deepseek"];
 }
 
 // Throttled (24h) update check, started with the server. Never blocks a call:
@@ -69,7 +69,7 @@ startServer("consult-bridge", "0.1.0", (server) => {
           .array(z.string())
           .optional()
           .describe(
-            "Engine set (mode 'all') or chain order (mode 'first'). Entries are an engine (copilot, codex, agy, nim, deepseek) or engine:model (e.g. nim:nvidia/nemotron-3-ultra-550b-a55b; a model only on copilot, codex, nim, deepseek). Defaults to copilot,codex (or CONSULT_ORDER env). agy (paused), nim and deepseek are opt-in and only run when listed. Invalid entries are ignored and reported. Pass a single entry to force one engine.",
+            "Engine set (mode 'all') or chain order (mode 'first'). Entries are an engine (copilot, codex, agy, nim, deepseek) or engine:model (e.g. nim:nvidia/nemotron-3-ultra-550b-a55b; a model only on copilot, codex, nim, deepseek). Defaults to copilot,codex,deepseek (or CONSULT_ORDER env); deepseek needs the local deeperseeker proxy and fails soft when it is down. agy and nim are opt-in and only run when listed. Invalid entries are ignored and reported. Pass a single entry to force one engine.",
           ),
       },
     },

@@ -239,7 +239,7 @@ test("parseOrder: engine:model specs, filtering, dedupe, default", () => {
   assert.deepEqual(parseOrder("agy:x,grok:y,codex:gpt,copilot:m,deepseek:v"), ["codex:gpt", "copilot:m", "deepseek:v"]);
   assert.deepEqual(parseOrder("nim:,nim,nope:x,:y"), ["nim"]);
   assert.deepEqual(parseOrder("nim:a,codex,nim:a,codex,nim"), ["nim:a", "codex", "nim"]);
-  assert.deepEqual(parseOrder(""), ["copilot", "codex"]);
+  assert.deepEqual(parseOrder(""), ["copilot", "codex", "deepseek"]);
 });
 
 test("runSpec: nim:a/b routes to nim with model a/b and flag model as fallback", async () => {
@@ -277,7 +277,7 @@ test("safeFileName / writeEngineResult: spec names stay in one flat dir", () => 
 test("parseOrderDetailed: reports dropped entries, ignores empty segments", () => {
   assert.deepEqual(parseOrderDetailed("codex,nope,agy:x,,nim:a/b"), { order: ["codex", "nim:a/b"], dropped: ["nope", "agy:x"] });
   assert.deepEqual(parseOrderDetailed("agy:x"), { order: [], dropped: ["agy:x"] });
-  assert.deepEqual(parseOrderDetailed(undefined), { order: ["copilot", "codex"], dropped: [] });
+  assert.deepEqual(parseOrderDetailed(undefined), { order: ["copilot", "codex", "deepseek"], dropped: [] });
 });
 
 test("resolvePrompt: words, --prompt-file, stdin, and misuse", () => {

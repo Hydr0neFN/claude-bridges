@@ -44,9 +44,10 @@ The `consult` tool currently fans out to **five engines**:
 `agy` is paused (Student re-verification pending): the code is kept and it can still be forced with
 `--order agy` or the MCP `order` argument; restore it by adding it back to the default order.
 
-`deepseek` and `nim` are opt-in: they are not in the default `CONSULT_ORDER`, so pass
-`--order ...,nim` or set `CONSULT_ORDER` to include them. Unlike the CLI engines they get no cwd,
-shell or file access — they only ever see the prompt text, so give them self-contained prompts.
+`deepseek` is in the default `CONSULT_ORDER` (last, so in mode `first` it is only a fallback). It needs the
+`deeperseeker` proxy on `127.0.0.1:4000`; if the proxy is down or has no key, it fails soft (e.g. `unreachable`)
+and the other engines still answer. `nim` is opt-in: pass `--order ...,nim` or set `CONSULT_ORDER` to include it.
+Unlike the CLI engines, `deepseek` and `nim` get no cwd, shell or file access — they only ever see the prompt text, so give them self-contained prompts.
 
 ### `nim` (NVIDIA NIM)
 
@@ -176,11 +177,11 @@ Consult a panel of external models. Two modes:
 consult({
   prompt: "Review this auth middleware for timing attacks",
   mode: "all",           // "all" | "first"
-  order: ["copilot", "codex"]  // engine set/chain order
+  order: ["copilot", "codex", "deepseek"]  // engine set/chain order
 })
 ```
 
-Engine order configurable via `order` arg or `CONSULT_ORDER` env (default `copilot,codex`); both accept `engine:model` entries (the MCP `order` is a list of strings; invalid entries are ignored and reported, and an order with no valid entry is an error). A failed engine (quota, auth, timeout, empty output, nonzero exit) fails over to the next; the trail is appended to the result.
+Engine order configurable via `order` arg or `CONSULT_ORDER` env (default `copilot,codex,deepseek`); both accept `engine:model` entries (the MCP `order` is a list of strings; invalid entries are ignored and reported, and an order with no valid entry is an error). A failed engine (quota, auth, timeout, empty output, nonzero exit) fails over to the next; the trail is appended to the result.
 
 ### `copilot_exec`
 
@@ -264,7 +265,7 @@ Overrides for the consult panel: `COPILOT_BRIDGE_BIN`, `CODEX_BRIDGE_BIN`, `AGY_
 | `CONSULT_TIMEOUT` | `300` | Per-engine timeout in seconds (not used by `nim`, see `NIM_TIMEOUT`) |
 | `CONSULT_MAX_OUTPUT_CHARS` | `50000` | Total output truncation cap |
 | `CONSULT_PER_ENGINE_CHARS` | `20000` | Per-engine truncation in `all` mode |
-| `CONSULT_ORDER` | `copilot,codex` | Default engine order |
+| `CONSULT_ORDER` | `copilot,codex,deepseek` | Default engine order |
 | `CONSULT_MODE` | `all` | Default mode (`all` or `first`) |
 | `COPILOT_MODEL` | (unset = auto) | Passed as `--model` only when set. If Copilot rejects it (auto-only plans such as Student), retried once on auto and labelled `copilot (auto; <model> unavailable on this plan)` |
 | `COPILOT_EFFORT` | (unset) | `--reasoning-effort none\|minimal\|low\|medium\|high\|xhigh\|max` |

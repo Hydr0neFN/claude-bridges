@@ -44,8 +44,9 @@ flowchart TD
 `agy` 目前已暫停（等待學生身分重新驗證）：程式碼仍保留，仍可用 `--order agy` 或 MCP 的 `order` 引數強制指定；
 要恢復時，只需將它加回預設順序。
 
-`deepseek` 與 `nim` 採選用制：不在預設的 `CONSULT_ORDER` 之中，須以 `--order ...,nim` 指定，
-或將其寫入 `CONSULT_ORDER`。與其他 CLI 引擎不同，它們沒有 cwd、shell 或檔案存取權限 ——
+`deepseek` 已列入預設的 `CONSULT_ORDER`（排在最後，因此在 `first` 模式下僅作為備援）。它需要 `deeperseeker` proxy
+在 `127.0.0.1:4000` 運作；若 proxy 未啟動或沒有金鑰，會以軟性失敗處理（例如 `unreachable`），其他引擎仍會照常回答。
+`nim` 仍為選用制：須以 `--order ...,nim` 指定，或將其寫入 `CONSULT_ORDER`。與其他 CLI 引擎不同，`deepseek` 與 `nim` 沒有 cwd、shell 或檔案存取權限 ——
 只看得到 prompt 文字本身，因此送給它們的 prompt 必須自帶完整脈絡。
 
 ### `nim`（NVIDIA NIM）
@@ -165,11 +166,11 @@ claude-bridges/
 consult({
   prompt: "Review this auth middleware for timing attacks",
   mode: "all",           // "all" | "first"
-  order: ["copilot", "codex"]  // engine set/chain order
+  order: ["copilot", "codex", "deepseek"]  // engine set/chain order
 })
 ```
 
-引擎順序可透過 `order` 引數或 `CONSULT_ORDER` 環境變數設定（預設為 `copilot,codex`；`order` 與 `CONSULT_ORDER` 的項目都可寫成 `engine:model`；MCP 的 `order` 是字串陣列，無效的項目會被忽略並回報，若沒有任何有效項目則回傳錯誤）。失敗的引擎（配額耗盡、驗證失敗、逾時、輸出為空、非零結束代碼）會自動容錯移轉至下一個引擎；相關歷程紀錄會附加於結果之後。
+引擎順序可透過 `order` 引數或 `CONSULT_ORDER` 環境變數設定（預設為 `copilot,codex,deepseek`；`order` 與 `CONSULT_ORDER` 的項目都可寫成 `engine:model`；MCP 的 `order` 是字串陣列，無效的項目會被忽略並回報，若沒有任何有效項目則回傳錯誤）。失敗的引擎（配額耗盡、驗證失敗、逾時、輸出為空、非零結束代碼）會自動容錯移轉至下一個引擎；相關歷程紀錄會附加於結果之後。
 
 ### `copilot_exec`
 
@@ -253,7 +254,7 @@ consult 小組的覆寫變數：`COPILOT_BRIDGE_BIN`、`CODEX_BRIDGE_BIN`、`AGY
 | `CONSULT_TIMEOUT` | `300` | 各引擎逾時時間（秒）（`nim` 不適用，請見 `NIM_TIMEOUT`） |
 | `CONSULT_MAX_OUTPUT_CHARS` | `50000` | 總輸出截斷上限字數 |
 | `CONSULT_PER_ENGINE_CHARS` | `20000` | `all` 模式下各引擎截斷字數 |
-| `CONSULT_ORDER` | `copilot,codex` | 預設引擎順序 |
+| `CONSULT_ORDER` | `copilot,codex,deepseek` | 預設引擎順序 |
 | `CONSULT_MODE` | `all` | 預設模式（`all` 或 `first`） |
 | `COPILOT_MODEL` | （未設 = auto） | 僅在設定時以 `--model` 傳入。若 Copilot 拒絕（如 Student 方案僅支援 auto），會改用 auto 重試一次並標示為 `copilot (auto; <model> unavailable on this plan)` |
 | `COPILOT_EFFORT` | （未設） | `--reasoning-effort none\|minimal\|low\|medium\|high\|xhigh\|max` |
