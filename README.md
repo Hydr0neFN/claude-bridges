@@ -15,7 +15,7 @@ flowchart TD
     C --> D["Claude Code: Sonnet 5 executes<br/>(Opus 4.8 advisor) → HANDOFF.md"]
     D --> E["Opus 4.6 reviews with me"]
     E --> F{"Cross-model review<br/>(consult-bridge)"}
-    F -.-> G["Gemini (agy-bridge)<br/>(paused)"]
+    F -.-> G["Gemini (agy-bridge)<br/>(opt-in)"]
     F --> H["GitHub Copilot CLI"]
     F --> I["OpenAI Codex CLI"]
     F -.-> J["Grok / others<br/>(planned, not yet wired)"]
@@ -37,12 +37,12 @@ The `consult` tool currently fans out to **five engines**:
 |---|---|---|
 | `copilot` | GitHub Copilot CLI (`copilot -p`) | Free (GitHub) |
 | `codex` | OpenAI Codex CLI (`codex exec`) | Free (ChatGPT) |
-| `agy` | Antigravity / Gemini CLI | Paid (Gemini Pro/Flash); **paused (not in default order)** |
+| `agy` | Antigravity / Gemini CLI | Google AI Plus (low quota); **opt-in (not in default order)** |
 | `deepseek` | `deeperseeker` proxy over a DeepSeek web account (HTTP, not a CLI) | Free (throwaway account) |
 | `nim` | NVIDIA NIM hosted API (HTTP, not a CLI) | Free trial tier |
 
-`agy` is paused (Student re-verification pending): the code is kept and it can still be forced with
-`--order agy` or the MCP `order` argument; restore it by adding it back to the default order.
+`agy` is opt-in because its Google AI Plus quota is small: add it with `--order copilot,codex,deepseek,agy`
+or the MCP `order` argument, ideally once per review.
 
 `deepseek` is in the default `CONSULT_ORDER` (last, so in mode `first` it is only a fallback). It needs the
 `deeperseeker` proxy on `127.0.0.1:4000`; if the proxy is down or has no key, it fails soft (e.g. `unreachable`)

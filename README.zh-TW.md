@@ -15,7 +15,7 @@ flowchart TD
     C --> D["Claude Code: Sonnet 5 executes<br/>(Opus 4.8 advisor) → HANDOFF.md"]
     D --> E["Opus 4.6 reviews with me"]
     E --> F{"Cross-model review<br/>(consult-bridge)"}
-    F -.-> G["Gemini (agy-bridge)<br/>(paused)"]
+    F -.-> G["Gemini (agy-bridge)<br/>(opt-in)"]
     F --> H["GitHub Copilot CLI"]
     F --> I["OpenAI Codex CLI"]
     F -.-> J["Grok / others<br/>(planned, not yet wired)"]
@@ -37,12 +37,12 @@ flowchart TD
 |---|---|---|
 | `copilot` | GitHub Copilot CLI (`copilot -p`) | Free (GitHub) |
 | `codex` | OpenAI Codex CLI (`codex exec`) | Free (ChatGPT) |
-| `agy` | Antigravity / Gemini CLI | Paid (Gemini Pro/Flash)；**已暫停（不在預設順序中）** |
+| `agy` | Antigravity / Gemini CLI | Google AI Plus（配額少）；**選用（不在預設順序中）** |
 | `deepseek` | 以 `deeperseeker` proxy 代理 DeepSeek 網頁帳號（HTTP，非 CLI） | Free（拋棄式帳號） |
 | `nim` | NVIDIA NIM 託管 API（HTTP，非 CLI） | Free（試用方案） |
 
-`agy` 目前已暫停（等待學生身分重新驗證）：程式碼仍保留，仍可用 `--order agy` 或 MCP 的 `order` 引數強制指定；
-要恢復時，只需將它加回預設順序。
+`agy` 採選用制，因為 Google AI Plus 配額很少：需要時以 `--order copilot,codex,deepseek,agy`
+或 MCP 的 `order` 引數加入，建議每次審查只呼叫一次。
 
 `deepseek` 已列入預設的 `CONSULT_ORDER`（排在最後，因此在 `first` 模式下僅作為備援）。它需要 `deeperseeker` proxy
 在 `127.0.0.1:4000` 運作；若 proxy 未啟動或沒有金鑰，會以軟性失敗處理（例如 `unreachable`），其他引擎仍會照常回答。
