@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import { parseArgs, parseOrder } from "../lib/args.js";
 import { resolveCopilot, resolveCodex, resolveAgy, findBinary, searchDirs, NotInstalledError } from "../lib/common.js";
-import { copilotRejectedModel, copilotArgs, codexArgs, agyArgs, AGY_ARGV_MAX, launchFailure } from "../lib/engines.js";
+import { copilotRejectedModel, copilotArgs, codexArgs, agyArgs, ARGV_PROMPT_MAX, acquirePromptFile, releasePromptFile, launchFailure } from "../lib/engines.js";
 import {
   checkUpdates, collectUpdates, formatFooter, GIT_ENV, REPO_DIR, isFresh, caskToken, parseBrewOutdated, applyUpdates, CACHE_TTL_MS, readCache,
 } from "../lib/updates.js";
@@ -271,8 +271,30 @@ test("agyArgs passes a short prompt inline", () => {
 
 test("agyArgs points a long prompt at its file and allows that dir", () => {
   const file = path.join(os.tmpdir(), "consult-agy-x.md");
-  const a = agyArgs({ prompt: "x".repeat(AGY_ARGV_MAX + 1), cwd: "/w", timeoutSec: 30, promptFile: file });
+  const a = agyArgs({ prompt: "x".repeat(ARGV_PROMPT_MAX + 1), cwd: "/w", timeoutSec: 30, promptFile: file });
   assert.deepEqual(a.slice(3, 5), ["--add-dir", path.dirname(file)]);
   assert.ok(a.at(-1).includes(file));
   assert.ok(a.at(-1).length < 400);
+});
+
+test("a long prompt is written once and shared until its last user releases it", () => {
+  const prompt = "y".repeat(ARGV_PROMPT_MAX + 1);
+  assert.equal(acquirePromptFile("short"), null);
+  const a = acquirePromptFile(prompt);
+  const b = acquirePromptFile(prompt);
+  assert.equal(a, b);
+  assert.equal(fs.readFileSync(a, "utf8"), prompt);
+  releasePromptFile(prompt);
+  assert.ok(fs.existsSync(a));
+  releasePromptFile(prompt);
+  assert.ok(!fs.existsSync(a));
+});
+
+test("copilot and codex args point a long prompt at its file", () => {
+  const file = path.join(os.tmpdir(), "consult-prompt-x.md");
+  const c = copilotArgs({ prompt: "long", cwd: "/w", promptFile: file });
+  assert.ok(c[1].includes(file));
+  assert.ok(c.includes("--add-dir") && c.includes(path.dirname(file)));
+  const x = codexArgs({ prompt: "long", cwd: "/w", outFile: "/o", promptFile: file });
+  assert.ok(x[1].includes(file));
 });
