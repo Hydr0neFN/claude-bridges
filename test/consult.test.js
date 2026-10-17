@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import { parseArgs, parseOrder } from "../lib/args.js";
 import { resolveCopilot, resolveCodex, resolveAgy, findBinary, searchDirs, NotInstalledError } from "../lib/common.js";
-import { copilotRejectedModel, copilotArgs, codexArgs, launchFailure } from "../lib/engines.js";
+import { copilotRejectedModel, copilotArgs, codexArgs, agyArgs, AGY_ARGV_MAX, launchFailure } from "../lib/engines.js";
 import {
   checkUpdates, collectUpdates, formatFooter, GIT_ENV, REPO_DIR, isFresh, caskToken, parseBrewOutdated, applyUpdates, CACHE_TTL_MS, readCache,
 } from "../lib/updates.js";
@@ -262,4 +262,17 @@ test("checkUpdates detach: stale cache -> detached refresh, cached items returne
 
 test("footer command is an absolute path", () => {
   assert.ok(formatFooter([{ kind: "repo", name: "claude-bridges", behind: 2 }]).includes(`node ${path.join(REPO_DIR, "consult-cli.js")} --update`));
+});
+
+test("agyArgs passes a short prompt inline", () => {
+  const a = agyArgs({ prompt: "hi", cwd: "/w", timeoutSec: 30 });
+  assert.deepEqual(a, ["--dangerously-skip-permissions", "--add-dir", "/w", "--print-timeout", "30s", "-p", "hi"]);
+});
+
+test("agyArgs points a long prompt at its file and allows that dir", () => {
+  const file = path.join(os.tmpdir(), "consult-agy-x.md");
+  const a = agyArgs({ prompt: "x".repeat(AGY_ARGV_MAX + 1), cwd: "/w", timeoutSec: 30, promptFile: file });
+  assert.deepEqual(a.slice(3, 5), ["--add-dir", path.dirname(file)]);
+  assert.ok(a.at(-1).includes(file));
+  assert.ok(a.at(-1).length < 400);
 });
