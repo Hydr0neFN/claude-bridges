@@ -41,14 +41,15 @@ flowchart TD
 | `deepseek` | 以 `deeperseeker` proxy 代理 DeepSeek 網頁帳號（HTTP，非 CLI） | Free（拋棄式帳號） |
 | `nim` | NVIDIA NIM 託管 API（HTTP，非 CLI） | Free（試用方案） |
 | `openrouter` | OpenRouter 免費模型（HTTP，非 CLI） | Free（有速率限制）；**選用（不在預設順序中）** |
+| `dsapi` | DeepSeek 官方 API，僅限 flash 模型（HTTP，非 CLI） | 按量計費（便宜）；**選用（不在預設順序中）**，但同時是 `deepseek` 的自動備援 |
 
 `agy` 採選用制，因為 Google AI Plus 配額很少：需要時以 `--order copilot,codex,deepseek,agy`
 或 MCP 的 `order` 引數加入，建議每次審查只呼叫一次。
 
 `deepseek` 已列入預設的 `CONSULT_ORDER`（排在最後，因此在 `first` 模式下僅作為備援）。它需要 `deeperseeker` proxy
-在 `127.0.0.1:4000` 運作；若 proxy 未啟動或沒有金鑰，會以軟性失敗處理（例如 `unreachable`），其他引擎仍會照常回答。
-`nim` 仍為選用制：須以 `--order ...,nim` 指定，或將其寫入 `CONSULT_ORDER`。`openrouter` 同樣為選用制：以 `--order copilot,codex,deepseek,openrouter` 加入，或在 `codex` 額度用盡時作為替代（例如 `--order copilot,deepseek,openrouter`）。
-與其他 CLI 引擎不同，`deepseek`、`nim` 與 `openrouter` 沒有 cwd、shell 或檔案存取權限 ——
+在 `127.0.0.1:4000` 運作；若 proxy 未啟動或沒有金鑰，會自動備援到官方 API（`dsapi`，僅限 flash，標示 `deepseek->dsapi`，見下），若也沒有金鑰則軟性失敗，其他引擎仍會照常回答。
+`nim` 仍為選用制：須以 `--order ...,nim` 指定，或將其寫入 `CONSULT_ORDER`。`openrouter` 同樣為選用制：以 `--order copilot,codex,deepseek,openrouter` 加入，或在 `codex` 額度用盡時作為替代（例如 `--order copilot,deepseek,openrouter`）。`dsapi` 也是選用制（`--order copilot,codex,deepseek,dsapi`），且 `deepseek` 會自動備援到它（見下）。
+與其他 CLI 引擎不同，`deepseek`、`nim`、`openrouter` 與 `dsapi` 沒有 cwd、shell 或檔案存取權限 ——
 只看得到 prompt 文字本身，因此送給它們的 prompt 必須自帶完整脈絡。
 
 ### `openrouter`（OpenRouter 免費模型）
@@ -66,13 +67,40 @@ flowchart TD
 模型優先順序：順序中的 `openrouter:<model>`，其次 `--openrouter-model`，再其次 `OPENROUTER_MODEL`，最後是內建預設值。
 與 `nim`、`deepseek` 一樣沒有檔案存取權限：prompt 必須自帶完整脈絡。
 
+### `dsapi`（DeepSeek 官方 API，僅限 flash）
+
+金鑰只需設定一次：放進 `~/.deepseek-api-key`（請限制權限：macOS/Linux 使用 `chmod 600`；Windows 使用
+`icacls <file> /inheritance:r /grant:r "%USERNAME%:(R,W)"`）或匯出 `DEEPSEEK_API_KEY`。環境變數優先；
+檔案內容可含其他文字，取第一個 `sk-...` 字串。沒有金鑰時回報 `[failed] no key`，其他引擎仍會照常回答。
+
+請求送往 `https://api.deepseek.com/chat/completions`（OpenAI 相容；`max_tokens` 1500，逾時 90 秒，關閉 thinking 模式）。
+遇到 HTTP 429（遵循 `Retry-After`，有上限）、5xx、逾時或網路錯誤時重試一次；400/401/402/403 不重試。
+開頭的 `<think>...</think>` 區塊會被移除。預設模型為 `deepseek-flash`（DeepSeek 一直讓它指向目前的 Flash 模型，
+已用 `GET /models` 確認；舊名 `deepseek-v4-flash` 仍可使用）。
+
+**僅限 flash。** 此引擎用於便宜的第二意見，因此拒絕任何非 Flash 模型。由於 DeepSeek 會不斷更改模型 ID，規則是樣式而非固定清單：
+ID 含有 `flash` 字樣（`deepseek-flash`、`deepseek-v6-flash`、`v4.1flash`，大小寫不拘）且**不含** `pro` 或 `reasoner` 才會被接受
+（因此 `deepseek-v4-pro`、`deepseek-reasoner`、`deepseek-chat`、`deepseek-flash-pro` 都會被拒絕）。被拒絕的模型
+（來自 `dsapi:<model>`、`--dsapi-model` 或 `DSAPI_MODEL`）會以 `dsapi is limited to flash` 失敗，且不會送出任何請求。
+模型優先順序：順序中的 `dsapi:<model>`，其次 `--dsapi-model`，再其次 `DSAPI_MODEL`，最後是內建預設值。
+
+**`deepseek` 的自動備援。** 當 `deeperseeker` proxy 無法連線（例如連線被拒）、沒有金鑰或回應 HTTP 5xx 時，`deepseek` 引擎會改用 `dsapi`
+重送 prompt，結果標示為 `deepseek->dsapi`，讓預設面板（`copilot,codex,deepseek`）在 proxy 停擺時仍保有 DeepSeek 的聲音。
+proxy 正常回答時完全不變；proxy 回 4xx 或指定了 `deepseek:<model>` 時不會觸發備援。備援也失敗時，錯誤訊息會同時列出兩者的原因。
+若在同一順序中同時列出 `deepseek` 與 `dsapi`，proxy 停擺時會呼叫兩次。
+
+**用量警示。** 每次請求與回應中的 token 用量（prompt + completion）會依本地日期記錄在
+`~/.dsapi-usage.json`（`{"day","requests","promptTokens","completionTokens"}`）。每日超過 **300 次請求**時，
+可能呼叫 dsapi 的執行會在頁尾印出一行警告（`[consult] dsapi: N requests today ...`；CLI 為 stderr，MCP 工具則附加在結果後）。
+300 僅是軟性警示：不會阻擋任何請求，因為 Flash 很便宜。
+
 ### `nim`（NVIDIA NIM）
 
 金鑰只需設定一次：放進 `~/.nvidia-nim-key`（請限制權限：macOS/Linux 使用 `chmod 600`；
 Windows 則依賴使用者設定檔的 ACL），或設定環境變數 `NIM_API_KEY`（環境變數優先）。
 
 順序中的項目可寫成 `engine` 或 `engine:model`（只以第一個 `:` 切分，因此含 `/` 的模型 ID 可正常使用）。
-`copilot`、`codex`、`nim`、`deepseek`、`openrouter` 支援指定模型；`agy:x` 與未知引擎會被忽略。
+`copilot`、`codex`、`nim`、`deepseek`、`openrouter`、`dsapi` 支援指定模型；`agy:x` 與未知引擎會被忽略。
 （`copilot:<model>` 在語法上可接受，但僅支援自動選模型的 Copilot 方案會拒絕 `--model`；此時引擎會改用自動模式重試一次，
 並將結果標示為 `copilot (auto; <model> unavailable on this plan)`。）`nim:<預設模型>` 與單獨的 `nim` 視為同一項目，會去除重複。
 如此一次諮詢即可同時詢問多個 NIM 模型，結果會標示為 `nim:<model>`：
@@ -204,6 +232,7 @@ node consult-cli.js --mode all --order copilot,codex "prompt"
 node consult-cli.js --copilot-model M --copilot-effort high --codex-model M --codex-effort low "prompt"
 node consult-cli.js --nim-model M "prompt"       # 指定 nim 引擎的模型（順序中的 nim:M 優先於此旗標）
 node consult-cli.js --openrouter-model M "prompt" # 指定 openrouter 引擎的模型（順序中的 openrouter:M 優先於此旗標）
+node consult-cli.js --dsapi-model M "prompt"    # 指定 dsapi 引擎的模型（僅限 flash ID；順序中的 dsapi:M 優先於此旗標）
 node consult-cli.js --check-nim-models         # 立即強制執行 NIM 新模型檢查
 node consult-cli.js --prompt-file review.txt   # 從檔案讀取 prompt（"-" 代表標準輸入），不可與 prompt 文字並用。適用於 diff 等長 prompt，避免超出作業系統的命令列長度上限
 node consult-cli.js --out-dir /tmp/c "prompt"   # 每個引擎完成時即寫入 <dir>/<engine>.md，全部完成後寫入 <dir>/_done（檔名中的 : 與 / 等不安全字元會改為 _）
@@ -290,6 +319,9 @@ consult 小組的覆寫變數：`COPILOT_BRIDGE_BIN`、`CODEX_BRIDGE_BIN`、`AGY
 | `OPENROUTER_API_KEY` | （未設定） | OpenRouter 金鑰，優先於金鑰檔案 |
 | `OPENROUTER_KEY_PATH` | `~/.openrouter-key` | 未設 `OPENROUTER_API_KEY` 時讀取的金鑰檔案（取第一個 `sk-or-...` 字串） |
 | `OPENROUTER_MODEL` | `nvidia/nemotron-3-ultra-550b-a55b:free` | 順序項目與 `--openrouter-model` 都未指定時的預設 OpenRouter 模型 |
+| `DEEPSEEK_API_KEY` | （未設定） | `dsapi` 使用的 DeepSeek 官方 API 金鑰，優先於金鑰檔案 |
+| `DSAPI_KEY_PATH` | `~/.deepseek-api-key` | 未設 `DEEPSEEK_API_KEY` 時讀取的金鑰檔案（取第一個 `sk-...` 字串） |
+| `DSAPI_MODEL` | `deepseek-flash` | 順序項目與 `--dsapi-model` 都未指定時的預設 `dsapi` 模型；必須是 flash ID（不含 `pro`/`reasoner`） |
 | `NIM_MAX_TOKENS` | `8192` | 傳給 NIM 的 `max_tokens` |
 | `NIM_TIMEOUT` | `600` | NIM 逾時時間（正數，單位為秒），上限 600，不受 `CONSULT_TIMEOUT` 影響。MCP 註冊需設定 `"timeout": 660000` 或更大才能用滿 |
 | `NIM_MODELS_CHECK_DAYS` | `14` | NIM 新模型檢查的間隔（正數，單位為天） |

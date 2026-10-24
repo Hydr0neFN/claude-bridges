@@ -41,15 +41,17 @@ The `consult` tool currently fans out to **five engines**:
 | `deepseek` | `deeperseeker` proxy over a DeepSeek web account (HTTP, not a CLI) | Free (throwaway account) |
 | `nim` | NVIDIA NIM hosted API (HTTP, not a CLI) | Free trial tier |
 | `openrouter` | OpenRouter free models (HTTP, not a CLI) | Free (rate-limited); **opt-in (not in default order)** |
+| `dsapi` | Official DeepSeek API, flash models only (HTTP, not a CLI) | Pay-per-token (cheap); **opt-in (not in default order)**, but also the automatic fallback of `deepseek` |
 
 `agy` is opt-in because its Google AI Plus quota is small: add it with `--order copilot,codex,deepseek,agy`
 or the MCP `order` argument, ideally once per review.
 
 `deepseek` is in the default `CONSULT_ORDER` (last, so in mode `first` it is only a fallback). It needs the
-`deeperseeker` proxy on `127.0.0.1:4000`; if the proxy is down or has no key, it fails soft (e.g. `unreachable`)
-and the other engines still answer. `nim` is opt-in: pass `--order ...,nim` or set `CONSULT_ORDER` to include it.
+`deeperseeker` proxy on `127.0.0.1:4000`; if the proxy is down or has no key, it falls back to the official API (`dsapi`, flash only, label `deepseek->dsapi`; see below), or fails soft
+if that has no key either, and the other engines still answer. `nim` is opt-in: pass `--order ...,nim` or set `CONSULT_ORDER` to include it.
 `openrouter` is opt-in too: add it with `--order copilot,codex,deepseek,openrouter`, or use it as a replacement when `codex` is out of quota (e.g. `--order copilot,deepseek,openrouter`).
-Unlike the CLI engines, `deepseek`, `nim` and `openrouter` get no cwd, shell or file access — they only ever see the prompt text, so give them self-contained prompts.
+`dsapi` is opt-in as well (`--order copilot,codex,deepseek,dsapi`), and `deepseek` falls back to it on its own (see below).
+Unlike the CLI engines, `deepseek`, `nim`, `openrouter` and `dsapi` get no cwd, shell or file access — they only ever see the prompt text, so give them self-contained prompts.
 
 ### `openrouter` (OpenRouter free models)
 
@@ -67,13 +69,42 @@ model that answered (`openrouter:<model>`); if every attempt fails, the failure 
 Model precedence: `openrouter:<model>` in the order, then `--openrouter-model`, then `OPENROUTER_MODEL`, then the default.
 Like `nim` and `deepseek`, it has no file access: the prompt must be self-contained.
 
+### `dsapi` (official DeepSeek API, flash only)
+
+Set up the key once: put it in `~/.deepseek-api-key` (restrict it: `chmod 600` on macOS/Linux; on Windows
+`icacls <file> /inheritance:r /grant:r "%USERNAME%:(R,W)"`) or export `DEEPSEEK_API_KEY`. The environment variable wins;
+the file may hold anything around the key, the first `sk-...` token is used. No key means `[failed] no key`; the other engines still answer.
+
+Requests go to `https://api.deepseek.com/chat/completions` (OpenAI-compatible; `max_tokens` 1500, 90 s timeout, thinking mode off).
+One retry on HTTP 429 (honouring `Retry-After`, capped), 5xx, a timeout or a network error; none on 400/401/402/403.
+A leading `<think>...</think>` block is stripped. The default model is `deepseek-flash`, the id DeepSeek keeps pointed at its
+current Flash model (checked against `GET /models`; the legacy `deepseek-v4-flash` still works).
+
+**Flash only.** The engine is for cheap second opinions, so it refuses anything that is not a Flash model. Because DeepSeek
+renames model ids over time, the rule is a pattern, not a fixed list: an id is accepted when it contains a `flash` token
+(`deepseek-flash`, `deepseek-v6-flash`, `v4.1flash`, any casing) and does **not** contain `pro` or `reasoner`
+(so `deepseek-v4-pro`, `deepseek-reasoner`, `deepseek-chat` and `deepseek-flash-pro` are refused). A refused model
+(via `dsapi:<model>`, `--dsapi-model` or `DSAPI_MODEL`) fails with `dsapi is limited to flash` and no request is sent.
+Model precedence: `dsapi:<model>` in the order, then `--dsapi-model`, then `DSAPI_MODEL`, then the default.
+
+**Automatic fallback for `deepseek`.** When the `deeperseeker` proxy is unreachable (e.g. connection refused), has no key
+or answers HTTP 5xx, the `deepseek` engine retries the prompt on `dsapi` and the result is labelled `deepseek->dsapi`,
+so the default panel (`copilot,codex,deepseek`) keeps a DeepSeek voice while the proxy is down. A proxy that answers is
+used unchanged; a proxy 4xx or a per-call model (`deepseek:<model>`) does not trigger the fallback. If the fallback fails
+too, the failure lists both reasons. Listing both `deepseek` and `dsapi` in one order means two calls while the proxy is down.
+
+**Usage guard.** Every request and the token usage of the response (prompt + completion) are counted per local day in
+`~/.dsapi-usage.json` (`{"day","requests","promptTokens","completionTokens"}`). Past **300 requests/day** a one-line warning
+(`[consult] dsapi: N requests today ...`) is printed in the footer (stderr in the CLI, appended to the result in the MCP
+tool) for runs that can call dsapi. 300 is a soft alarm only: nothing is blocked, Flash is cheap.
+
 ### `nim` (NVIDIA NIM)
 
 Set up the key once: put it in `~/.nvidia-nim-key` (restrict it: `chmod 600` on macOS/Linux; on
 Windows rely on your user-profile ACL) or export `NIM_API_KEY`. The environment variable wins.
 
 Order entries may be `engine` or `engine:model` (split on the first `:`, so model ids with `/` work).
-A model is accepted on `copilot`, `codex`, `nim`, `deepseek` and `openrouter`; `agy:x` and unknown engines are dropped.
+A model is accepted on `copilot`, `codex`, `nim`, `deepseek`, `openrouter` and `dsapi`; `agy:x` and unknown engines are dropped.
 (`copilot:<model>` is accepted syntactically, but auto-only Copilot plans reject `--model`; the engine then retries once on auto
 and labels the result `copilot (auto; <model> unavailable on this plan)`.) `nim:<default model>` is the same entry as bare `nim`
 and is deduplicated.
@@ -216,6 +247,7 @@ node consult-cli.js --mode all --order copilot,codex "prompt"
 node consult-cli.js --copilot-model M --copilot-effort high --codex-model M --codex-effort low "prompt"
 node consult-cli.js --nim-model M "prompt"       # model for the nim engine (an order entry nim:M wins over this)
 node consult-cli.js --openrouter-model M "prompt" # model for the openrouter engine (an order entry openrouter:M wins over this)
+node consult-cli.js --dsapi-model M "prompt"    # model for the dsapi engine (flash ids only; an order entry dsapi:M wins over this)
 node consult-cli.js --check-nim-models         # force the NIM new-model check now
 node consult-cli.js --prompt-file review.txt   # prompt from a file ("-" = stdin); not combinable with prompt words. Use it for long prompts such as a diff, which can exceed the OS command-line limit
 node consult-cli.js --out-dir /tmp/c "prompt"   # also write <dir>/<engine>.md as each engine settles, <dir>/_done at the end (unsafe filename characters such as : and / become _)
@@ -305,6 +337,9 @@ Overrides for the consult panel: `COPILOT_BRIDGE_BIN`, `CODEX_BRIDGE_BIN`, `AGY_
 | `OPENROUTER_API_KEY` | (unset) | OpenRouter key; takes precedence over the key file |
 | `OPENROUTER_KEY_PATH` | `~/.openrouter-key` | Key file read when `OPENROUTER_API_KEY` is unset (the first `sk-or-...` token is used) |
 | `OPENROUTER_MODEL` | `nvidia/nemotron-3-ultra-550b-a55b:free` | Default OpenRouter model when neither the order entry nor `--openrouter-model` sets one |
+| `DEEPSEEK_API_KEY` | (unset) | Official DeepSeek API key for `dsapi`; takes precedence over the key file |
+| `DSAPI_KEY_PATH` | `~/.deepseek-api-key` | Key file read when `DEEPSEEK_API_KEY` is unset (the first `sk-...` token is used) |
+| `DSAPI_MODEL` | `deepseek-flash` | Default `dsapi` model when neither the order entry nor `--dsapi-model` sets one; must be a flash id (no `pro`/`reasoner`) |
 
 ## Why This Exists
 

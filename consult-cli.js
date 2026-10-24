@@ -5,11 +5,11 @@
 // costs nothing until called. Shares lib/engines.js with the MCP version.
 //
 // Usage: consult "<prompt>" | --prompt-file <path|-> [--mode all|first] [--order copilot,codex] [--cwd <dir>] [--out-dir <dir>]
-//        [--copilot-model M] [--copilot-effort E] [--codex-model M] [--codex-effort E] [--nim-model M] [--openrouter-model M]
+//        [--copilot-model M] [--copilot-effort E] [--codex-model M] [--codex-effort E] [--nim-model M] [--openrouter-model M] [--dsapi-model M]
 //        --order entries are `engine` or `engine:model`, e.g. nim:moonshotai/kimi-k3,codex (model wins over the flags)
 //        consult --check-updates | --update | --check-nim-models | --refresh-nim-models
 
-import { runSpec } from "./lib/engines.js";
+import { runSpec, dsapiUsageNotice } from "./lib/engines.js";
 import { parseArgs, parseOrderDetailed, resolvePrompt } from "./lib/args.js";
 import { runPanel, runChain, lastResortNote, formatSection, summaryLine, writeEngineResult, writeDone } from "./lib/panel.js";
 import { checkUpdates, spawnRefresh, settle, applyUpdates, formatFooter } from "./lib/updates.js";
@@ -52,17 +52,18 @@ async function main() {
     process.exit(2);
   }
   if (!prompt) {
-    console.error('usage: consult "<prompt>" | --prompt-file <path|-> [--mode all|first] [--order copilot,codex] [--cwd <dir>] [--out-dir <dir>] [--nim-model M] [--openrouter-model M] | --check-updates | --update | --check-nim-models');
+    console.error('usage: consult "<prompt>" | --prompt-file <path|-> [--mode all|first] [--order copilot,codex] [--cwd <dir>] [--out-dir <dir>] [--nim-model M] [--openrouter-model M] [--dsapi-model M] | --check-updates | --update | --check-nim-models');
     process.exit(2);
   }
 
   const { order, dropped } = parseOrderDetailed(args.order || process.env.CONSULT_ORDER, undefined, {
     nimModel: args.nimModel || process.env.NIM_MODEL,
     openrouterModel: args.openrouterModel || process.env.OPENROUTER_MODEL,
+    dsapiModel: args.dsapiModel || process.env.DSAPI_MODEL,
   });
   if (dropped.length) console.error(`consult: ignoring invalid order entries: ${dropped.join(", ")}`);
   if (!order.length) {
-    console.error("consult: no valid engine in the order (use engine or engine:model; a model only on copilot, codex, nim, deepseek, openrouter)");
+    console.error("consult: no valid engine in the order (use engine or engine:model; a model only on copilot, codex, nim, deepseek, openrouter, dsapi)");
     process.exit(2);
   }
 
@@ -80,6 +81,7 @@ async function main() {
     codex: { model: args.codexModel, effort: args.codexEffort },
     nim: { model: args.nimModel },
     openrouter: { model: args.openrouterModel },
+    dsapi: { model: args.dsapiModel },
   };
   const run = (name) => runSpec(name, { prompt, cwd, timeoutSec: TIMEOUT_SEC }, opts);
 
@@ -87,7 +89,9 @@ async function main() {
   const write = (stream, text) => new Promise((resolve) => stream.write(text, (err) => resolve(!err)));
   const finish = async (code) => {
     const nimGate = nimCache ? nimNoticeGate(nimCache) : null; // at most 3 shows a day (shared throttle file)
-    const footer = [formatFooter(updates.items), nimGate?.text].filter(Boolean).join("\n");
+    // dsapi soft alarm: only for runs that can call the official API (dsapi listed, or deepseek falling back to it).
+    const dsapiNote = order.some((s) => /^(dsapi|deepseek)(:|$)/.test(s)) ? dsapiUsageNotice() : null;
+    const footer = [formatFooter(updates.items), nimGate?.text, dsapiNote].filter(Boolean).join("\n");
     // Piped stdio can be asynchronous: drain stdout, then the footer, before exiting.
     await write(process.stdout, "");
     const written = footer ? await write(process.stderr, `${footer}\n`) : false;
