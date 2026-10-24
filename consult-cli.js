@@ -5,7 +5,7 @@
 // costs nothing until called. Shares lib/engines.js with the MCP version.
 //
 // Usage: consult "<prompt>" | --prompt-file <path|-> [--mode all|first] [--order copilot,codex] [--cwd <dir>] [--out-dir <dir>]
-//        [--copilot-model M] [--copilot-effort E] [--codex-model M] [--codex-effort E] [--nim-model M]
+//        [--copilot-model M] [--copilot-effort E] [--codex-model M] [--codex-effort E] [--nim-model M] [--openrouter-model M]
 //        --order entries are `engine` or `engine:model`, e.g. nim:moonshotai/kimi-k3,codex (model wins over the flags)
 //        consult --check-updates | --update | --check-nim-models | --refresh-nim-models
 
@@ -52,16 +52,17 @@ async function main() {
     process.exit(2);
   }
   if (!prompt) {
-    console.error('usage: consult "<prompt>" | --prompt-file <path|-> [--mode all|first] [--order copilot,codex] [--cwd <dir>] [--out-dir <dir>] [--nim-model M] | --check-updates | --update | --check-nim-models');
+    console.error('usage: consult "<prompt>" | --prompt-file <path|-> [--mode all|first] [--order copilot,codex] [--cwd <dir>] [--out-dir <dir>] [--nim-model M] [--openrouter-model M] | --check-updates | --update | --check-nim-models');
     process.exit(2);
   }
 
   const { order, dropped } = parseOrderDetailed(args.order || process.env.CONSULT_ORDER, undefined, {
     nimModel: args.nimModel || process.env.NIM_MODEL,
+    openrouterModel: args.openrouterModel || process.env.OPENROUTER_MODEL,
   });
   if (dropped.length) console.error(`consult: ignoring invalid order entries: ${dropped.join(", ")}`);
   if (!order.length) {
-    console.error("consult: no valid engine in the order (use engine or engine:model; a model only on copilot, codex, nim, deepseek)");
+    console.error("consult: no valid engine in the order (use engine or engine:model; a model only on copilot, codex, nim, deepseek, openrouter)");
     process.exit(2);
   }
 
@@ -78,6 +79,7 @@ async function main() {
     copilot: { model: args.copilotModel, effort: args.copilotEffort },
     codex: { model: args.codexModel, effort: args.codexEffort },
     nim: { model: args.nimModel },
+    openrouter: { model: args.openrouterModel },
   };
   const run = (name) => runSpec(name, { prompt, cwd, timeoutSec: TIMEOUT_SEC }, opts);
 

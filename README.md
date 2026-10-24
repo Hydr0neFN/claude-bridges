@@ -40,6 +40,7 @@ The `consult` tool currently fans out to **five engines**:
 | `agy` | Antigravity / Gemini CLI | Google AI Plus (low quota); **opt-in (not in default order)** |
 | `deepseek` | `deeperseeker` proxy over a DeepSeek web account (HTTP, not a CLI) | Free (throwaway account) |
 | `nim` | NVIDIA NIM hosted API (HTTP, not a CLI) | Free trial tier |
+| `openrouter` | OpenRouter free models (HTTP, not a CLI) | Free (rate-limited); **opt-in (not in default order)** |
 
 `agy` is opt-in because its Google AI Plus quota is small: add it with `--order copilot,codex,deepseek,agy`
 or the MCP `order` argument, ideally once per review.
@@ -47,7 +48,24 @@ or the MCP `order` argument, ideally once per review.
 `deepseek` is in the default `CONSULT_ORDER` (last, so in mode `first` it is only a fallback). It needs the
 `deeperseeker` proxy on `127.0.0.1:4000`; if the proxy is down or has no key, it fails soft (e.g. `unreachable`)
 and the other engines still answer. `nim` is opt-in: pass `--order ...,nim` or set `CONSULT_ORDER` to include it.
-Unlike the CLI engines, `deepseek` and `nim` get no cwd, shell or file access — they only ever see the prompt text, so give them self-contained prompts.
+`openrouter` is opt-in too: add it with `--order copilot,codex,deepseek,openrouter`, or use it as a replacement when `codex` is out of quota (e.g. `--order copilot,deepseek,openrouter`).
+Unlike the CLI engines, `deepseek`, `nim` and `openrouter` get no cwd, shell or file access — they only ever see the prompt text, so give them self-contained prompts.
+
+### `openrouter` (OpenRouter free models)
+
+Set up the key once: put it in `~/.openrouter-key` (restrict it: `chmod 600` on macOS/Linux; on Windows
+`icacls <file> /inheritance:r /grant:r "%USERNAME%:(R,W)"`) or export `OPENROUTER_API_KEY`. The environment variable wins.
+No key means the engine is reported as `[failed] no key`; the other engines still answer.
+
+Requests go to `https://openrouter.ai/api/v1/chat/completions` (`max_tokens` 1500, 90 s timeout per attempt).
+Free models are rate-limited, so the engine walks a fallback chain on HTTP 404/429/5xx, a timeout or an empty
+reply (at most 3 attempts): `nvidia/nemotron-3-ultra-550b-a55b:free`, `poolside/laguna-s-2.1:free`,
+`cohere/north-mini-code:free`. A requested model is tried first, then the rest of the chain. A reply with
+only reasoning counts as empty; a leading `<think>...</think>` block is stripped. The result is labelled with the
+model that answered (`openrouter:<model>`); if every attempt fails, the failure lists each model and why
+(a 429 shows as `rate-limited`). Any other error (e.g. 401 bad key) ends the chain at once.
+Model precedence: `openrouter:<model>` in the order, then `--openrouter-model`, then `OPENROUTER_MODEL`, then the default.
+Like `nim` and `deepseek`, it has no file access: the prompt must be self-contained.
 
 ### `nim` (NVIDIA NIM)
 
@@ -55,7 +73,7 @@ Set up the key once: put it in `~/.nvidia-nim-key` (restrict it: `chmod 600` on 
 Windows rely on your user-profile ACL) or export `NIM_API_KEY`. The environment variable wins.
 
 Order entries may be `engine` or `engine:model` (split on the first `:`, so model ids with `/` work).
-A model is accepted on `copilot`, `codex`, `nim` and `deepseek`; `agy:x` and unknown engines are dropped.
+A model is accepted on `copilot`, `codex`, `nim`, `deepseek` and `openrouter`; `agy:x` and unknown engines are dropped.
 (`copilot:<model>` is accepted syntactically, but auto-only Copilot plans reject `--model`; the engine then retries once on auto
 and labels the result `copilot (auto; <model> unavailable on this plan)`.) `nim:<default model>` is the same entry as bare `nim`
 and is deduplicated.
@@ -197,6 +215,7 @@ Delegate to OpenAI Codex CLI via `codex exec`. Sandboxed read-only by default. P
 node consult-cli.js --mode all --order copilot,codex "prompt"
 node consult-cli.js --copilot-model M --copilot-effort high --codex-model M --codex-effort low "prompt"
 node consult-cli.js --nim-model M "prompt"       # model for the nim engine (an order entry nim:M wins over this)
+node consult-cli.js --openrouter-model M "prompt" # model for the openrouter engine (an order entry openrouter:M wins over this)
 node consult-cli.js --check-nim-models         # force the NIM new-model check now
 node consult-cli.js --prompt-file review.txt   # prompt from a file ("-" = stdin); not combinable with prompt words. Use it for long prompts such as a diff, which can exceed the OS command-line limit
 node consult-cli.js --out-dir /tmp/c "prompt"   # also write <dir>/<engine>.md as each engine settles, <dir>/_done at the end (unsafe filename characters such as : and / become _)
@@ -283,6 +302,9 @@ Overrides for the consult panel: `COPILOT_BRIDGE_BIN`, `CODEX_BRIDGE_BIN`, `AGY_
 | `NIM_MAX_TOKENS` | `8192` | `max_tokens` sent to NIM |
 | `NIM_TIMEOUT` | `600` | NIM timeout in seconds (positive number); capped at 600, ignores `CONSULT_TIMEOUT`. MCP registrations need `"timeout": 660000` or more to use all of it |
 | `NIM_MODELS_CHECK_DAYS` | `14` | Interval of the NIM new-model check (positive number of days) |
+| `OPENROUTER_API_KEY` | (unset) | OpenRouter key; takes precedence over the key file |
+| `OPENROUTER_KEY_PATH` | `~/.openrouter-key` | Key file read when `OPENROUTER_API_KEY` is unset (the first `sk-or-...` token is used) |
+| `OPENROUTER_MODEL` | `nvidia/nemotron-3-ultra-550b-a55b:free` | Default OpenRouter model when neither the order entry nor `--openrouter-model` sets one |
 
 ## Why This Exists
 

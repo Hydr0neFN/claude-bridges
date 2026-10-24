@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // consult-bridge: one tool, `consult`, over a panel of consultant CLIs
-// (copilot, codex, deepseek by default; agy and nim are opt-in, see lib/engines.js). Default mode "all" runs every engine in parallel and
+// (copilot, codex, deepseek by default; agy, nim and openrouter are opt-in, see lib/engines.js). Default mode "all" runs every engine in parallel and
 // returns each successful answer labeled by engine — rationale: the engines sit
 // on different plan tiers (agy = paid Gemini Pro, others free), so first-come-
 // first-serve would systematically prefer the weakest agent. Mode "first" keeps
@@ -18,7 +18,7 @@ const TIMEOUT_SEC = positiveInt(process.env.CONSULT_TIMEOUT, 300); // per engine
 const MAX_OUTPUT_CHARS = positiveInt(process.env.CONSULT_MAX_OUTPUT_CHARS, 50000);
 const PER_ENGINE_CHARS = positiveInt(process.env.CONSULT_PER_ENGINE_CHARS, 20000);
 
-const NIM_OPTS = () => ({ nimModel: process.env.NIM_MODEL }); // what a bare `nim` resolves to
+const NIM_OPTS = () => ({ nimModel: process.env.NIM_MODEL, openrouterModel: process.env.OPENROUTER_MODEL }); // what a bare `nim` / `openrouter` resolve to
 
 function defaultOrder() {
   const raw = parseOrder(process.env.CONSULT_ORDER, undefined, NIM_OPTS());
@@ -69,7 +69,7 @@ startServer("consult-bridge", "0.1.0", (server) => {
           .array(z.string())
           .optional()
           .describe(
-            "Engine set (mode 'all') or chain order (mode 'first'). Entries are an engine (copilot, codex, agy, nim, deepseek) or engine:model (e.g. nim:nvidia/nemotron-3-ultra-550b-a55b; a model only on copilot, codex, nim, deepseek). Defaults to copilot,codex,deepseek (or CONSULT_ORDER env); deepseek needs the local deeperseeker proxy and fails soft when it is down. agy and nim are opt-in and only run when listed. Invalid entries are ignored and reported. Pass a single entry to force one engine.",
+            "Engine set (mode 'all') or chain order (mode 'first'). Entries are an engine (copilot, codex, agy, nim, deepseek, openrouter) or engine:model (e.g. nim:nvidia/nemotron-3-ultra-550b-a55b; a model only on copilot, codex, nim, deepseek, openrouter). Defaults to copilot,codex,deepseek (or CONSULT_ORDER env); deepseek needs the local deeperseeker proxy and fails soft when it is down. agy, nim and openrouter are opt-in and only run when listed; openrouter (free models, rate-limited, falls back through 3 models) sees only the prompt text like nim and deepseek. Invalid entries are ignored and reported. Pass a single entry to force one engine.",
           ),
       },
     },
@@ -81,7 +81,7 @@ startServer("consult-bridge", "0.1.0", (server) => {
         ? parseOrderDetailed(given.join(","), undefined, NIM_OPTS())
         : { order: defaultOrder(), dropped: [] };
       if (!order.length) {
-        return errText(`consult: no valid engine in order (invalid: ${dropped.join(", ")}). Use engine or engine:model; a model only on copilot, codex, nim, deepseek.`);
+        return errText(`consult: no valid engine in order (invalid: ${dropped.join(", ")}). Use engine or engine:model; a model only on copilot, codex, nim, deepseek, openrouter.`);
       }
       const run = (name) => runSpec(name, { prompt: args.prompt, cwd, timeoutSec: TIMEOUT_SEC });
       updates.pending.then((r) => { updates.items = r.items; });

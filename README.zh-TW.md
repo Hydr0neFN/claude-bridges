@@ -40,14 +40,31 @@ flowchart TD
 | `agy` | Antigravity / Gemini CLI | Google AI Plus（配額少）；**選用（不在預設順序中）** |
 | `deepseek` | 以 `deeperseeker` proxy 代理 DeepSeek 網頁帳號（HTTP，非 CLI） | Free（拋棄式帳號） |
 | `nim` | NVIDIA NIM 託管 API（HTTP，非 CLI） | Free（試用方案） |
+| `openrouter` | OpenRouter 免費模型（HTTP，非 CLI） | Free（有速率限制）；**選用（不在預設順序中）** |
 
 `agy` 採選用制，因為 Google AI Plus 配額很少：需要時以 `--order copilot,codex,deepseek,agy`
 或 MCP 的 `order` 引數加入，建議每次審查只呼叫一次。
 
 `deepseek` 已列入預設的 `CONSULT_ORDER`（排在最後，因此在 `first` 模式下僅作為備援）。它需要 `deeperseeker` proxy
 在 `127.0.0.1:4000` 運作；若 proxy 未啟動或沒有金鑰，會以軟性失敗處理（例如 `unreachable`），其他引擎仍會照常回答。
-`nim` 仍為選用制：須以 `--order ...,nim` 指定，或將其寫入 `CONSULT_ORDER`。與其他 CLI 引擎不同，`deepseek` 與 `nim` 沒有 cwd、shell 或檔案存取權限 ——
+`nim` 仍為選用制：須以 `--order ...,nim` 指定，或將其寫入 `CONSULT_ORDER`。`openrouter` 同樣為選用制：以 `--order copilot,codex,deepseek,openrouter` 加入，或在 `codex` 額度用盡時作為替代（例如 `--order copilot,deepseek,openrouter`）。
+與其他 CLI 引擎不同，`deepseek`、`nim` 與 `openrouter` 沒有 cwd、shell 或檔案存取權限 ——
 只看得到 prompt 文字本身，因此送給它們的 prompt 必須自帶完整脈絡。
+
+### `openrouter`（OpenRouter 免費模型）
+
+金鑰只需設定一次：放進 `~/.openrouter-key`（請限制權限：macOS/Linux 使用 `chmod 600`；Windows 使用
+`icacls <file> /inheritance:r /grant:r "%USERNAME%:(R,W)"`）或匯出 `OPENROUTER_API_KEY`。環境變數優先。
+沒有金鑰時，該引擎會回報 `[failed] no key`，其他引擎仍會照常回答。
+
+請求送往 `https://openrouter.ai/api/v1/chat/completions`（`max_tokens` 1500，每次嘗試逾時 90 秒）。
+免費模型有速率限制，因此遇到 HTTP 404/429/5xx、逾時或空回覆時，引擎會依備援鏈往下試（最多 3 次）：
+`nvidia/nemotron-3-ultra-550b-a55b:free`、`poolside/laguna-s-2.1:free`、`cohere/north-mini-code:free`。
+指定的模型會先試，之後才是鏈上其餘模型。只含推理過程的回覆視為空回覆；開頭的 `<think>...</think>` 區塊會被移除。
+結果會標示為實際回答的模型（`openrouter:<model>`）；若全部失敗，失敗訊息會列出各模型與原因（429 顯示為 `rate-limited`）。
+其他錯誤（例如 401 金鑰無效）會立即結束備援鏈。
+模型優先順序：順序中的 `openrouter:<model>`，其次 `--openrouter-model`，再其次 `OPENROUTER_MODEL`，最後是內建預設值。
+與 `nim`、`deepseek` 一樣沒有檔案存取權限：prompt 必須自帶完整脈絡。
 
 ### `nim`（NVIDIA NIM）
 
@@ -55,7 +72,7 @@ flowchart TD
 Windows 則依賴使用者設定檔的 ACL），或設定環境變數 `NIM_API_KEY`（環境變數優先）。
 
 順序中的項目可寫成 `engine` 或 `engine:model`（只以第一個 `:` 切分，因此含 `/` 的模型 ID 可正常使用）。
-`copilot`、`codex`、`nim`、`deepseek` 支援指定模型；`agy:x` 與未知引擎會被忽略。
+`copilot`、`codex`、`nim`、`deepseek`、`openrouter` 支援指定模型；`agy:x` 與未知引擎會被忽略。
 （`copilot:<model>` 在語法上可接受，但僅支援自動選模型的 Copilot 方案會拒絕 `--model`；此時引擎會改用自動模式重試一次，
 並將結果標示為 `copilot (auto; <model> unavailable on this plan)`。）`nim:<預設模型>` 與單獨的 `nim` 視為同一項目，會去除重複。
 如此一次諮詢即可同時詢問多個 NIM 模型，結果會標示為 `nim:<model>`：
@@ -186,6 +203,7 @@ consult({
 node consult-cli.js --mode all --order copilot,codex "prompt"
 node consult-cli.js --copilot-model M --copilot-effort high --codex-model M --codex-effort low "prompt"
 node consult-cli.js --nim-model M "prompt"       # 指定 nim 引擎的模型（順序中的 nim:M 優先於此旗標）
+node consult-cli.js --openrouter-model M "prompt" # 指定 openrouter 引擎的模型（順序中的 openrouter:M 優先於此旗標）
 node consult-cli.js --check-nim-models         # 立即強制執行 NIM 新模型檢查
 node consult-cli.js --prompt-file review.txt   # 從檔案讀取 prompt（"-" 代表標準輸入），不可與 prompt 文字並用。適用於 diff 等長 prompt，避免超出作業系統的命令列長度上限
 node consult-cli.js --out-dir /tmp/c "prompt"   # 每個引擎完成時即寫入 <dir>/<engine>.md，全部完成後寫入 <dir>/_done（檔名中的 : 與 / 等不安全字元會改為 _）
@@ -269,6 +287,9 @@ consult 小組的覆寫變數：`COPILOT_BRIDGE_BIN`、`CODEX_BRIDGE_BIN`、`AGY
 | `NIM_KEY_PATH` | `~/.nvidia-nim-key` | 未設 `NIM_API_KEY` 時讀取的金鑰檔案 |
 | `NIM_MODEL` | `nvidia/nemotron-3-ultra-550b-a55b` | 順序項目與 `--nim-model` 都未指定時的預設 NIM 模型 |
 | `NIM_BASE` | `https://integrate.api.nvidia.com` | NIM API 基底 URL |
+| `OPENROUTER_API_KEY` | （未設定） | OpenRouter 金鑰，優先於金鑰檔案 |
+| `OPENROUTER_KEY_PATH` | `~/.openrouter-key` | 未設 `OPENROUTER_API_KEY` 時讀取的金鑰檔案（取第一個 `sk-or-...` 字串） |
+| `OPENROUTER_MODEL` | `nvidia/nemotron-3-ultra-550b-a55b:free` | 順序項目與 `--openrouter-model` 都未指定時的預設 OpenRouter 模型 |
 | `NIM_MAX_TOKENS` | `8192` | 傳給 NIM 的 `max_tokens` |
 | `NIM_TIMEOUT` | `600` | NIM 逾時時間（正數，單位為秒），上限 600，不受 `CONSULT_TIMEOUT` 影響。MCP 註冊需設定 `"timeout": 660000` 或更大才能用滿 |
 | `NIM_MODELS_CHECK_DAYS` | `14` | NIM 新模型檢查的間隔（正數，單位為天） |
