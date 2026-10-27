@@ -173,7 +173,7 @@ test("parseOrder: openrouter:<default model> is the same entry as bare openroute
 });
 
 test("default order does not include openrouter", () => {
-  assert.deepEqual(parseOrder(undefined), ["copilot", "codex", "deepseek", "nim"]);
+  assert.deepEqual(parseOrder(undefined), ["copilot", "codex", "deepseek", "agy", "nim"]);
 });
 
 test("parseArgs: --openrouter-model", () => {
