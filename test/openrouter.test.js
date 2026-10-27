@@ -3,12 +3,13 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { parseOrder, parseOrderDetailed, parseArgs } from "../lib/args.js";
 import {
-  ENGINES, DEFAULT_OPENROUTER_MODEL, OPENROUTER_CHAIN, resolveOpenRouterKey, openRouterModels, redact, runSpec,
+  ENGINES, DEFAULT_OPENROUTER_MODEL, OPENROUTER_CHAIN, OPENROUTER_ATTEMPT_TIMEOUT_SEC, OPENROUTER_MAX_ATTEMPTS,
+  resolveOpenRouterKey, openRouterModels, openRouterChain, openRouterTimeoutSec, redact, runSpec,
 } from "../lib/engines.js";
 
 // Built at runtime so no key-shaped literal lands in the repo.
 const FAKE_KEY = "sk-or-" + "v1-" + "x".repeat(20);
-const [M1, M2, M3] = OPENROUTER_CHAIN;
+const [M1, M2, M3, M4, M5] = OPENROUTER_CHAIN;
 
 const reply = (message, finish_reason = "stop") => ({ choices: [{ message, finish_reason }] });
 const ok = (message) => () => new Response(JSON.stringify(reply(message)), { status: 200 });
@@ -84,10 +85,10 @@ test("openrouter: a think block is stripped from the answer", async () => {
   assert.equal(r.body, "answer");
 });
 
-test("openrouter: all three fail -> one failure naming each model, 429 as rate-limited, max 3 attempts", async () => {
-  const f = fakeFetch([status(429, "busy"), status(429, "busy"), status(429, "busy"), ok({ content: "never" })]);
+test("openrouter: all five fail -> one failure naming each model, 429 as rate-limited, max 5 attempts", async () => {
+  const f = fakeFetch([...Array(5).fill(status(429, "busy")), ok({ content: "never" })]);
   const r = await run(f);
-  assert.equal(f.calls.length, 3);
+  assert.equal(f.calls.length, 5);
   assert.equal(r.ok, false);
   assert.equal(r.engine, `openrouter:${M1}`);
   assert.match(r.reason, /rate-limited/);
@@ -117,7 +118,7 @@ test("openrouter: an unreachable network falls through, then reports every attem
     throw new TypeError("fetch failed");
   };
   const r = await run(f);
-  assert.equal(n, 3);
+  assert.equal(n, 5);
   assert.equal(r.ok, false);
   assert.match(r.reason, /unreachable/);
 });
@@ -143,9 +144,9 @@ test("openrouter: the key never appears in a failure reason or an echoed answer"
 
 test("openrouter: model precedence is spec model > OPENROUTER_MODEL env > default; chain follows with no repeats", async () => {
   const custom = "vendor/custom:free";
-  assert.deepEqual(openRouterModels(custom), [custom, M1, M2]);
-  assert.deepEqual(openRouterModels(M2), [M2, M1, M3]);
-  assert.deepEqual(openRouterModels(M1), [M1, M2, M3]);
+  assert.deepEqual(openRouterModels(custom), [custom, M1, M2, M3, M4]);
+  assert.deepEqual(openRouterModels(M2), [M2, M1, M3, M4, M5]);
+  assert.deepEqual(openRouterModels(M1), [M1, M2, M3, M4, M5]);
   const fromEnv = fakeFetch([ok({ content: "x" })]);
   await ENGINES.openrouter({ prompt: "p", env: { ...env, OPENROUTER_MODEL: "env/model:free" }, fetchImpl: fromEnv });
   assert.equal(fromEnv.calls[0].body.model, "env/model:free");
@@ -159,6 +160,109 @@ test("runSpec: openrouter:<model> is routed with its model", async () => {
   const r = await runSpec("openrouter:vendor/custom:free", { prompt: "p", cwd: ".", timeoutSec: 300 }, { openrouter: { env, fetchImpl: f } });
   assert.equal(f.calls[0].body.model, "vendor/custom:free");
   assert.equal(r.engine, "openrouter:vendor/custom:free");
+});
+
+const called = (f) => f.calls.map((c) => c.body.model);
+
+test("openrouter chain: built-in chain is 5 distinct :free models led by the default", () => {
+  assert.equal(OPENROUTER_CHAIN.length, 5);
+  assert.equal(new Set(OPENROUTER_CHAIN).size, 5);
+  assert.equal(M1, DEFAULT_OPENROUTER_MODEL);
+  assert.ok(OPENROUTER_CHAIN.every((m) => m.endsWith(":free")));
+});
+
+test("openrouter chain: OPENROUTER_CHAIN env overrides the list; blanks ignored", async () => {
+  assert.deepEqual(openRouterChain({ OPENROUTER_CHAIN: " a/x:free , b/y:free,, " }), ["a/x:free", "b/y:free"]);
+  assert.deepEqual(openRouterChain({ OPENROUTER_CHAIN: " , " }), OPENROUTER_CHAIN);
+  const f = fakeFetch([status(404), ok({ content: "second" })]);
+  const r = await run(f, { env: { ...env, OPENROUTER_CHAIN: "a/x:free,b/y:free,c/z:free" } });
+  assert.deepEqual(called(f), [DEFAULT_OPENROUTER_MODEL, "a/x:free"]);
+  assert.equal(r.engine, "openrouter:a/x:free");
+});
+
+test("openrouter chain: first model answering -> one call, label names it", async () => {
+  const f = fakeFetch([ok({ content: "hi" })]);
+  const r = await run(f);
+  assert.deepEqual(called(f), [M1]);
+  assert.equal(r.engine, `openrouter:${M1}`);
+});
+
+test("openrouter chain: steps past 404, 410, 429, a timeout down to the fifth model, labelled with it", async () => {
+  const timeout = () => { throw Object.assign(new Error("t"), { name: "TimeoutError" }); };
+  const f = fakeFetch([status(404), status(410), status(429), timeout, ok({ content: "fifth" })]);
+  const r = await run(f);
+  assert.deepEqual(called(f), [M1, M2, M3, M4, M5]);
+  assert.deepEqual(r, { engine: `openrouter:${M5}`, ok: true, body: "fifth" });
+  const g = fakeFetch([status(500), ok({ content: "second" })]);
+  assert.equal((await run(g)).engine, `openrouter:${M2}`);
+});
+
+test("openrouter chain: a 400 'not a valid model ID' (delisted model) steps on; other 400s still stop", async () => {
+  const f = fakeFetch([status(400, '{"error":{"message":"x/y:free is not a valid model ID","code":400}}'), ok({ content: "next" })]);
+  const r = await run(f);
+  assert.deepEqual(called(f), [M1, M2]);
+  assert.equal(r.engine, `openrouter:${M2}`);
+});
+
+test("openrouter chain: auth and bad-request failures end the chain", async () => {
+  for (const code of [400, 401, 402, 403]) {
+    const f = fakeFetch([status(code, "denied"), ok({ content: "never" })]);
+    const r = await run(f);
+    assert.equal(r.ok, false, String(code));
+    assert.equal(f.calls.length, 1, String(code));
+  }
+});
+
+test("openrouter chain: explicit openrouter:<other> runs only that model; the default model still chains", async () => {
+  const f = fakeFetch([status(404), ok({ content: "never" })]);
+  const r = await runSpec("openrouter:vendor/custom:free", { prompt: "p", cwd: ".", env, fetchImpl: f });
+  assert.equal(r.ok, false);
+  assert.deepEqual(called(f), ["vendor/custom:free"]);
+  assert.equal(r.engine, "openrouter:vendor/custom:free");
+  assert.ok(!r.reason.includes("; "));
+
+  const g = fakeFetch([status(404), ok({ content: "chained" })]);
+  const r2 = await runSpec(`openrouter:${M1}`, { prompt: "p", cwd: ".", env, fetchImpl: g });
+  assert.deepEqual(called(g), [M1, M2]);
+  assert.equal(r2.engine, `openrouter:${M2}`);
+});
+
+test("openrouter chain: a flag/env model (not explicit) starts the chain there", async () => {
+  const f = fakeFetch([status(404), ok({ content: "x" })]);
+  const r = await runSpec("openrouter", { prompt: "p", cwd: ".", env, fetchImpl: f }, { openrouter: { model: "flag/m:free" } });
+  assert.deepEqual(called(f), ["flag/m:free", M1]);
+  assert.equal(r.engine, `openrouter:${M1}`);
+  const g = fakeFetch([status(404), ok({ content: "x" })]);
+  await runSpec("openrouter", { prompt: "p", cwd: ".", env: { ...env, OPENROUTER_MODEL: "env/m:free" }, fetchImpl: g });
+  assert.deepEqual(called(g), ["env/m:free", M1]);
+});
+
+test("openrouterTimeoutSec: default 300, OPENROUTER_TIMEOUT honoured, clamped to 600, garbage -> 300", () => {
+  assert.equal(OPENROUTER_ATTEMPT_TIMEOUT_SEC * OPENROUTER_MAX_ATTEMPTS, 300);
+  assert.equal(openRouterTimeoutSec({}), 300);
+  assert.equal(openRouterTimeoutSec({ OPENROUTER_TIMEOUT: "120" }), 120);
+  assert.equal(openRouterTimeoutSec({ OPENROUTER_TIMEOUT: "9999" }), 600);
+  assert.equal(openRouterTimeoutSec({ OPENROUTER_TIMEOUT: "abc" }), 300);
+  assert.equal(openRouterTimeoutSec({ OPENROUTER_TIMEOUT: "-5" }), 300);
+});
+
+test("openrouter chain budget: 60 s per step, five steps fit the 300 s default, a short budget skips the rest", async () => {
+  const realNow = Date.now;
+  let t = realNow();
+  Date.now = () => t; // every failed request "takes" 60 s
+  try {
+    const f = async (url, init) => { f.calls.push(JSON.parse(init.body).model); t += 60_000; return new Response("x", { status: 500 }); };
+    f.calls = [];
+    await run(f);
+    assert.equal(f.calls.length, 5);
+    f.calls = [];
+    t = realNow();
+    const r = await run(f, { timeoutSec: 130 }); // 60 + 60 used, 10 s left (< 15 s minimum)
+    assert.equal(f.calls.length, 2);
+    assert.ok(r.reason.includes(`${M3}: skipped`));
+  } finally {
+    Date.now = realNow;
+  }
 });
 
 test("parseOrder: openrouter and openrouter:<model> entries", () => {

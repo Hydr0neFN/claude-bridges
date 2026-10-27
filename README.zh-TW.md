@@ -40,7 +40,7 @@ flowchart TD
 | `agy` | Antigravity / Gemini CLI | Google AI Plus（配額少）；**2026-10-27 起列入預設順序，直到剩餘配額用完為止** |
 | `deepseek` | 以 `deeperseeker` proxy 代理 DeepSeek 網頁帳號（HTTP，非 CLI） | Free（拋棄式帳號） |
 | `nim` | NVIDIA NIM 託管 API（HTTP，非 CLI） | Free（試用方案） |
-| `openrouter` | OpenRouter 免費模型（HTTP，非 CLI） | Free（有速率限制）；列入預設順序（在 `nim` 之後），並帶有 3 個模型的備援鏈 |
+| `openrouter` | OpenRouter 免費模型（HTTP，非 CLI） | Free（有速率限制）；列入預設順序（在 `nim` 之後），並帶有 5 個模型的備援鏈 |
 | `dsapi` | DeepSeek 官方 API，僅限 flash 模型（HTTP，非 CLI） | 按量計費（便宜）；**選用（不在預設順序中）**，但同時是 `deepseek` 的自動備援 |
 
 `agy` 原本採選用制（Google AI Plus 配額很少）；2026-10-27 起列入預設順序，配額用完即移除（之前以 `--order copilot,codex,deepseek,agy`
@@ -48,7 +48,7 @@ flowchart TD
 
 `deepseek` 已列入預設的 `CONSULT_ORDER`（排在最後，因此在 `first` 模式下僅作為備援）。它需要 `deeperseeker` proxy
 在 `127.0.0.1:4000` 運作；若 proxy 未啟動或沒有金鑰，會自動備援到官方 API（`dsapi`，僅限 flash，標示 `deepseek->dsapi`，見下），若也沒有金鑰則軟性失敗，其他引擎仍會照常回答。
-`nim` 也已列入預設順序（在 `deepseek` 之後，預設為 `copilot,codex,deepseek,agy,nim,openrouter`，`qwen` 可用時再加在最後），並帶有 3 個模型的備援鏈（`nvidia/nemotron-3-ultra-550b-a55b` -> `minimaxai/minimax-m3.1-flash` -> `nvidia/nemotron-3.5-super-vl-120b-a12b`，可用 `NIM_CHAIN` 覆寫；每步最多 200 秒，整條鏈受 `NIM_TIMEOUT` 限制）；明確寫 `nim:<其他模型>` 時只跑該模型、不走備援鏈。`openrouter` 自 2026-10-27 起同樣列入預設順序（在 `qwen` 之前），預設模型 `poolside/laguna-s-2.1:free` 與 `nim` 不同家族，兩者算作獨立的聲音；要排除它請明確指定 `--order`（例如 `--order copilot,codex,deepseek`）。`dsapi` 也是選用制（`--order copilot,codex,deepseek,dsapi`），且 `deepseek` 會自動備援到它（見下）。
+`nim` 也已列入預設順序（在 `deepseek` 之後，預設為 `copilot,codex,deepseek,agy,nim,openrouter`，`qwen` 可用時再加在最後），並帶有 5 個模型的備援鏈（`nvidia/nemotron-3-ultra-550b-a55b` -> `minimaxai/minimax-m3.1-flash` -> `nvidia/nemotron-3.5-super-vl-120b-a12b` -> `z-ai/glm-5.3-flash` -> `openai/gpt-oss-20b`，可用 `NIM_CHAIN` 覆寫；每步最多 120 秒，整條鏈受 `NIM_TIMEOUT` 限制，上限 600 秒）；明確寫 `nim:<其他模型>` 時只跑該模型、不走備援鏈。`openrouter` 自 2026-10-27 起同樣列入預設順序（在 `qwen` 之前），預設模型 `poolside/laguna-s-2.1:free` 與 `nim` 不同家族（兩條備援鏈的模型家族完全不重疊，由測試保證），兩者算作獨立的聲音；要排除它請明確指定 `--order`（例如 `--order copilot,codex,deepseek`）。`dsapi` 也是選用制（`--order copilot,codex,deepseek,dsapi`），且 `deepseek` 會自動備援到它（見下）。
 與其他 CLI 引擎不同，`deepseek`、`nim`、`openrouter` 與 `dsapi` 沒有 cwd、shell 或檔案存取權限 ——
 只看得到 prompt 文字本身，因此送給它們的 prompt 必須自帶完整脈絡。
 
@@ -58,12 +58,18 @@ flowchart TD
 `icacls <file> /inheritance:r /grant:r "%USERNAME%:(R,W)"`）或匯出 `OPENROUTER_API_KEY`。環境變數優先。
 沒有金鑰時，該引擎會回報 `[failed] no key`，其他引擎仍會照常回答。
 
-請求送往 `https://openrouter.ai/api/v1/chat/completions`（`max_tokens` 1500，每次嘗試逾時 90 秒）。
-免費模型有速率限制，因此遇到 HTTP 404/429/5xx、逾時或空回覆時，引擎會依備援鏈往下試（最多 3 次）：
-`poolside/laguna-s-2.1:free`、`cohere/north-mini-code:free`、`nvidia/nemotron-3-ultra-550b-a55b:free`。
-指定的模型會先試，之後才是鏈上其餘模型。只含推理過程的回覆視為空回覆；開頭的 `<think>...</think>` 區塊會被移除。
+請求送往 `https://openrouter.ai/api/v1/chat/completions`（`max_tokens` 1500）。
+免費模型有速率限制，因此裸 `openrouter`（以及由 `--openrouter-model` / `OPENROUTER_MODEL` 指定的模型，或 `openrouter:<該預設模型>`）會依備援鏈往下試，
+由指定的模型開始（最多 5 次；可用 `OPENROUTER_CHAIN=a/x:free,b/y:free` 覆寫）：
+`poolside/laguna-s-2.1:free` -> `cohere/north-mini-code:free` -> `recursive/flint-v1.0:free` -> `dots-studio/dots-3-note-preview:free` -> `liquid/lfm-2.5-2.6b:free`。
+遇到 404、410、429、5xx（含 HTTP 200 內夾帶的同類錯誤）、400「not a valid model ID」（模型已下架）、逾時、網路錯誤、空回覆或只含推理過程的回覆時換下一個；
+其他錯誤（401 金鑰無效、402 無額度、其他 400）會立即結束備援鏈。開頭的 `<think>...</think>` 區塊會被移除。
 結果會標示為實際回答的模型（`openrouter:<model>`）；若全部失敗，失敗訊息會列出各模型與原因（429 顯示為 `rate-limited`）。
-其他錯誤（例如 401 金鑰無效）會立即結束備援鏈。
+順序中**明確**寫 `openrouter:<其他模型>` 時只跑該模型，使用整段逾時、不走備援鏈。
+時間預算：每步最多 60 秒（`OPENROUTER_ATTEMPT_TIMEOUT_SEC`），整條鏈受 `OPENROUTER_TIMEOUT` 限制（預設 300 秒 = 5 x 60，上限 600 秒）；剩餘不足 15 秒的後續步驟會被略過。
+2026-10-27 實測，這些免費模型回答一個小型 code review 提示約 2-21 秒。
+此鏈與 `nim` 鏈沒有任何共同的模型家族（由測試保證）。刻意排除：`thinkingmachines/inkling[-small]:free`（403，僅限 agentic harness）、
+`google/gemma-4-*:free` 與 `xingchen-agi/xing4.0-29b-a4b:free`（探測時每次都被上游 429）、`nvidia/nemotron-*:free`（與 `nim` 鏈同家族）。
 模型優先順序：順序中的 `openrouter:<model>`，其次 `--openrouter-model`，再其次 `OPENROUTER_MODEL`，最後是內建預設值。
 與 `nim`、`deepseek` 一樣沒有檔案存取權限：prompt 必須自帶完整脈絡。
 
@@ -333,11 +339,14 @@ consult 小組的覆寫變數：`COPILOT_BRIDGE_BIN`、`CODEX_BRIDGE_BIN`、`AGY
 | `DEEPSEEKER_ENV_PATH` | `~/Claude/deeperseeker/.env` | 環境變數未設時，從何處讀取金鑰 |
 | `NIM_API_KEY` | （未設定） | NVIDIA NIM 金鑰，優先於金鑰檔案 |
 | `NIM_KEY_PATH` | `~/.nvidia-nim-key` | 未設 `NIM_API_KEY` 時讀取的金鑰檔案 |
-| `NIM_MODEL` | `nvidia/nemotron-3-ultra-550b-a55b` | 順序項目與 `--nim-model` 都未指定時的預設 NIM 模型 |
+| `NIM_MODEL` | `nvidia/nemotron-3-ultra-550b-a55b` | 順序項目與 `--nim-model` 都未指定時的預設 NIM 模型（備援鏈第一步） |
+| `NIM_CHAIN` | `nvidia/nemotron-3-ultra-550b-a55b,minimaxai/minimax-m3.1-flash,nvidia/nemotron-3.5-super-vl-120b-a12b,z-ai/glm-5.3-flash,openai/gpt-oss-20b` | 備援鏈在指定模型之後依序嘗試的模型（逗號分隔；最多 5 次，每步最多 120 秒，整條鏈受 `NIM_TIMEOUT` 限制） |
 | `NIM_BASE` | `https://integrate.api.nvidia.com` | NIM API 基底 URL |
 | `OPENROUTER_API_KEY` | （未設定） | OpenRouter 金鑰，優先於金鑰檔案 |
 | `OPENROUTER_KEY_PATH` | `~/.openrouter-key` | 未設 `OPENROUTER_API_KEY` 時讀取的金鑰檔案（取第一個 `sk-or-...` 字串） |
-| `OPENROUTER_MODEL` | `poolside/laguna-s-2.1:free` | 順序項目與 `--openrouter-model` 都未指定時的預設 OpenRouter 模型 |
+| `OPENROUTER_MODEL` | `poolside/laguna-s-2.1:free` | 順序項目與 `--openrouter-model` 都未指定時的預設 OpenRouter 模型（備援鏈第一步） |
+| `OPENROUTER_CHAIN` | `poolside/laguna-s-2.1:free,cohere/north-mini-code:free,recursive/flint-v1.0:free,dots-studio/dots-3-note-preview:free,liquid/lfm-2.5-2.6b:free` | 備援鏈在指定模型之後依序嘗試的模型（逗號分隔；最多 5 次，每步最多 60 秒，整條鏈受 `OPENROUTER_TIMEOUT` 限制） |
+| `OPENROUTER_TIMEOUT` | `300` | openrouter 整條備援鏈的逾時秒數（正數）；上限 600，忽略 `CONSULT_TIMEOUT` |
 | `DEEPSEEK_API_KEY` | （未設定） | `dsapi` 使用的 DeepSeek 官方 API 金鑰，優先於金鑰檔案 |
 | `DSAPI_KEY_PATH` | `~/.deepseek-api-key` | 未設 `DEEPSEEK_API_KEY` 時讀取的金鑰檔案（取第一個 `sk-...` 字串） |
 | `DSAPI_MODEL` | `deepseek-flash` | 順序項目與 `--dsapi-model` 都未指定時的預設 `dsapi` 模型；必須是 flash ID（不含 `pro`/`reasoner`） |

@@ -39,8 +39,8 @@ The `consult` tool currently fans out to **five engines**:
 | `codex` | OpenAI Codex CLI (`codex exec`) | Free (ChatGPT) |
 | `agy` | Antigravity / Gemini CLI | Google AI Plus (low quota); **in the default order while it drains its remaining quota (2026-10-27); removed once exhausted** |
 | `deepseek` | `deeperseeker` proxy over a DeepSeek web account (HTTP, not a CLI) | Free (throwaway account) |
-| `nim` | NVIDIA NIM hosted API (HTTP, not a CLI) | Free trial tier; in the default order, with a 3-model fallback chain |
-| `openrouter` | OpenRouter free models (HTTP, not a CLI) | Free (rate-limited); in the default order (after `nim`), with a 3-model fallback chain |
+| `nim` | NVIDIA NIM hosted API (HTTP, not a CLI) | Free trial tier; in the default order, with a 5-model fallback chain |
+| `openrouter` | OpenRouter free models (HTTP, not a CLI) | Free (rate-limited); in the default order (after `nim`), with a 5-model fallback chain |
 | `dsapi` | Official DeepSeek API, flash models only (HTTP, not a CLI) | Pay-per-token (cheap); **opt-in (not in default order)**, but also the automatic fallback of `deepseek` |
 
 `agy` was opt-in because its Google AI Plus quota is small; since 2026-10-27 it is in the default order until that quota is used up (before: `--order copilot,codex,deepseek,agy`)
@@ -62,13 +62,20 @@ Set up the key once: put it in `~/.openrouter-key` (restrict it: `chmod 600` on 
 `icacls <file> /inheritance:r /grant:r "%USERNAME%:(R,W)"`) or export `OPENROUTER_API_KEY`. The environment variable wins.
 No key means the engine is reported as `[failed] no key`; the other engines still answer.
 
-Requests go to `https://openrouter.ai/api/v1/chat/completions` (`max_tokens` 1500, 90 s timeout per attempt).
-Free models are rate-limited, so the engine walks a fallback chain on HTTP 404/429/5xx, a timeout or an empty
-reply (at most 3 attempts): `poolside/laguna-s-2.1:free`, `cohere/north-mini-code:free`,
-`nvidia/nemotron-3-ultra-550b-a55b:free`. A requested model is tried first, then the rest of the chain. A reply with
-only reasoning counts as empty; a leading `<think>...</think>` block is stripped. The result is labelled with the
-model that answered (`openrouter:<model>`); if every attempt fails, the failure lists each model and why
-(a 429 shows as `rate-limited`). Any other error (e.g. 401 bad key) ends the chain at once.
+Requests go to `https://openrouter.ai/api/v1/chat/completions` (`max_tokens` 1500).
+Free models are rate-limited, so a bare `openrouter` (and a model set by `--openrouter-model` / `OPENROUTER_MODEL`, or
+`openrouter:<that default>`) walks a fallback chain, starting with the requested model (5 attempts at most; override the list with
+`OPENROUTER_CHAIN=a/x:free,b/y:free`): `poolside/laguna-s-2.1:free` -> `cohere/north-mini-code:free` -> `recursive/flint-v1.0:free` ->
+`dots-studio/dots-3-note-preview:free` -> `liquid/lfm-2.5-2.6b:free`. It steps past 404, 410, 429, 5xx (also a 200 carrying such an error),
+a 400 "not a valid model ID" (delisted model), timeouts, network errors, empty answers and reasoning-only answers; any other error
+(401 bad key, 402 no credit, other 400) ends the chain at once. A leading `<think>...</think>` block is stripped. The result is labelled
+with the model that answered (`openrouter:<model>`); if every attempt fails, the failure lists each model and why (a 429 shows as
+`rate-limited`). An **explicit** `openrouter:<other model>` in the order runs only that model, with the whole timeout and no chain.
+Time budget: 60 s per attempt (`OPENROUTER_ATTEMPT_TIMEOUT_SEC`), whole chain within `OPENROUTER_TIMEOUT` (default 300 s = 5 x 60, maximum 600);
+a later step with less than 15 s left is skipped. The free models answered a small code-review prompt in 2-21 s on 2026-10-27.
+No model family appears in both this chain and the `nim` chain (a test enforces it), so the two engines are never the same voice. Left
+out: `thinkingmachines/inkling[-small]:free` (403, agentic harnesses only), `google/gemma-4-*:free` and `xingchen-agi/xing4.0-29b-a4b:free`
+(429 upstream on every call of the probe), the `nvidia/nemotron-*:free` models (same family as the `nim` chain).
 Model precedence: `openrouter:<model>` in the order, then `--openrouter-model`, then `OPENROUTER_MODEL`, then the default.
 Like `nim` and `deepseek`, it has no file access: the prompt must be self-contained.
 
@@ -121,16 +128,16 @@ Model precedence for `nim`: `engine:model` in the order, then `--nim-model`, the
 
 **Fallback chain.** Free-tier NIM models stall, vanish (HTTP 404, or 410 after end of life) or return reasoning only, so a bare `nim`
 (and a model set by `--nim-model` / `NIM_MODEL`, or `nim:<that default>`) walks a chain, starting with the requested model:
-`nvidia/nemotron-3-ultra-550b-a55b` -> `minimaxai/minimax-m3.1-flash` -> `nvidia/nemotron-3.5-super-vl-120b-a12b` (3 attempts at most;
+`nvidia/nemotron-3-ultra-550b-a55b` -> `minimaxai/minimax-m3.1-flash` -> `nvidia/nemotron-3.5-super-vl-120b-a12b` -> `z-ai/glm-5.3-flash` -> `openai/gpt-oss-20b` (5 attempts at most;
 override the list with `NIM_CHAIN=a/x,b/y,c/z`). It steps past 404, 410, 5xx, 429 (after the usual single retry), timeouts, network errors,
 gateway errors, empty answers and reasoning-only answers; it stops on 400/401/402/403 and other 4xx (another model would fail the same way).
 The result is labelled with the model that answered (`nim:<model>`); if every attempt fails the reason lists each attempt, and if the only
 output was reasoning, the first reasoning-only reply is shown as a last resort. An **explicit** `nim:<other model>` in the order runs only
-that model, with the whole timeout and no chain, so single-model evaluations stay honest. Time budget: each attempt gets at most 200 s
-(`NIM_ATTEMPT_TIMEOUT_SEC`), and the whole chain stays within `NIM_TIMEOUT` (default and maximum 600 s, so 3 x 200 s); a later step with less than
+that model, with the whole timeout and no chain, so single-model evaluations stay honest. Time budget: each attempt gets at most 120 s
+(`NIM_ATTEMPT_TIMEOUT_SEC`), and the whole chain stays within `NIM_TIMEOUT` (default and maximum 600 s, so 5 x 120 s); a later step with less than
 15 s left is skipped (the first step always runs). The chain was picked from an eval on 2026-10-27 (code-review prompt with planted bugs): ultra answered in 27-79 s,
-minimax-m3.1-flash in 93 s, super-vl in 57 s, all finding the bugs; glm-5.3 (396 s), glm-5.3-flash (319 s) and step-5-preview (228 s) were too
-slow for a 200 s step, deepseek-v4.1-flash answered 504, kimi-k3 410 (end of life), kimi-k2.6 404, and nemotron-3.5-bolt-e4b answered weakly. Latency varies a lot run
+minimax-m3.1-flash in 93 s, super-vl in 57 s, all finding the bugs; glm-5.3 (396 s), glm-5.3-flash (319 s in that run, 10-15 s in later ones; it is the 4th step) and step-5-preview (228 s, 35-87 s later) were too
+slow or too erratic for the first steps (`openai/gpt-oss-20b` answered in 5-10 s and closes the chain), deepseek-v4.1-flash answered 504, kimi-k3 410 (end of life), kimi-k2.6 404, and nemotron-3.5-bolt-e4b answered weakly. Latency varies a lot run
 to run (the free queue is shared), which is why the chain mixes vendors.
 If a model returns only reasoning and no final answer, the section starts with `[reasoning only: ...]`;
 a `[truncated: hit max_tokens]` line marks cut-off answers (raise `NIM_MAX_TOKENS`); a truncated answer still counts as an answer.
@@ -367,14 +374,16 @@ Overrides for the consult panel: `COPILOT_BRIDGE_BIN`, `CODEX_BRIDGE_BIN`, `AGY_
 | `NIM_API_KEY` | (unset) | NVIDIA NIM key; takes precedence over the key file |
 | `NIM_KEY_PATH` | `~/.nvidia-nim-key` | Key file read when `NIM_API_KEY` is unset |
 | `NIM_MODEL` | `nvidia/nemotron-3-ultra-550b-a55b` | Default NIM model when neither the order entry nor `--nim-model` sets one (first step of the fallback chain) |
-| `NIM_CHAIN` | `nvidia/nemotron-3-ultra-550b-a55b,minimaxai/minimax-m3.1-flash,nvidia/nemotron-3.5-super-vl-120b-a12b` | Comma list of models the fallback chain walks after the requested one (3 attempts at most; each step 200 s at most, whole chain within `NIM_TIMEOUT`) |
+| `NIM_CHAIN` | `nvidia/nemotron-3-ultra-550b-a55b,minimaxai/minimax-m3.1-flash,nvidia/nemotron-3.5-super-vl-120b-a12b,z-ai/glm-5.3-flash,openai/gpt-oss-20b` | Comma list of models the fallback chain walks after the requested one (5 attempts at most; each step 120 s at most, whole chain within `NIM_TIMEOUT`) |
 | `NIM_BASE` | `https://integrate.api.nvidia.com` | NIM API base URL |
 | `NIM_MAX_TOKENS` | `8192` | `max_tokens` sent to NIM |
 | `NIM_TIMEOUT` | `600` | NIM timeout in seconds (positive number); capped at 600, ignores `CONSULT_TIMEOUT`. MCP registrations need `"timeout": 660000` or more to use all of it |
 | `NIM_MODELS_CHECK_DAYS` | `14` | Interval of the NIM new-model check (positive number of days) |
 | `OPENROUTER_API_KEY` | (unset) | OpenRouter key; takes precedence over the key file |
 | `OPENROUTER_KEY_PATH` | `~/.openrouter-key` | Key file read when `OPENROUTER_API_KEY` is unset (the first `sk-or-...` token is used) |
-| `OPENROUTER_MODEL` | `poolside/laguna-s-2.1:free` | Default OpenRouter model when neither the order entry nor `--openrouter-model` sets one |
+| `OPENROUTER_MODEL` | `poolside/laguna-s-2.1:free` | Default OpenRouter model when neither the order entry nor `--openrouter-model` sets one (first step of the fallback chain) |
+| `OPENROUTER_CHAIN` | `poolside/laguna-s-2.1:free,cohere/north-mini-code:free,recursive/flint-v1.0:free,dots-studio/dots-3-note-preview:free,liquid/lfm-2.5-2.6b:free` | Comma list of models the fallback chain walks after the requested one (5 attempts at most; each step 60 s at most, whole chain within `OPENROUTER_TIMEOUT`) |
+| `OPENROUTER_TIMEOUT` | `300` | Whole openrouter chain budget in seconds (positive number); capped at 600, ignores `CONSULT_TIMEOUT` |
 | `DEEPSEEK_API_KEY` | (unset) | Official DeepSeek API key for `dsapi`; takes precedence over the key file |
 | `DSAPI_KEY_PATH` | `~/.deepseek-api-key` | Key file read when `DEEPSEEK_API_KEY` is unset (the first `sk-...` token is used) |
 | `DSAPI_MODEL` | `deepseek-flash` | Default `dsapi` model when neither the order entry nor `--dsapi-model` sets one; must be a flash id (no `pro`/`reasoner`) |
