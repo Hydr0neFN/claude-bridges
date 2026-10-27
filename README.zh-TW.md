@@ -40,7 +40,7 @@ flowchart TD
 | `agy` | Antigravity / Gemini CLI | Google AI Plus（配額少）；**2026-10-27 起列入預設順序，直到剩餘配額用完為止** |
 | `deepseek` | 以 `deeperseeker` proxy 代理 DeepSeek 網頁帳號（HTTP，非 CLI） | Free（拋棄式帳號） |
 | `nim` | NVIDIA NIM 託管 API（HTTP，非 CLI） | Free（試用方案） |
-| `openrouter` | OpenRouter 免費模型（HTTP，非 CLI） | Free（有速率限制）；**選用（不在預設順序中）** |
+| `openrouter` | OpenRouter 免費模型（HTTP，非 CLI） | Free（有速率限制）；列入預設順序（在 `nim` 之後），並帶有 3 個模型的備援鏈 |
 | `dsapi` | DeepSeek 官方 API，僅限 flash 模型（HTTP，非 CLI） | 按量計費（便宜）；**選用（不在預設順序中）**，但同時是 `deepseek` 的自動備援 |
 
 `agy` 原本採選用制（Google AI Plus 配額很少）；2026-10-27 起列入預設順序，配額用完即移除（之前以 `--order copilot,codex,deepseek,agy`
@@ -48,7 +48,7 @@ flowchart TD
 
 `deepseek` 已列入預設的 `CONSULT_ORDER`（排在最後，因此在 `first` 模式下僅作為備援）。它需要 `deeperseeker` proxy
 在 `127.0.0.1:4000` 運作；若 proxy 未啟動或沒有金鑰，會自動備援到官方 API（`dsapi`，僅限 flash，標示 `deepseek->dsapi`，見下），若也沒有金鑰則軟性失敗，其他引擎仍會照常回答。
-`nim` 也已列入預設順序（在 `deepseek` 之後，預設為 `copilot,codex,deepseek,agy,nim`，`qwen` 可用時再加在最後），並帶有 3 個模型的備援鏈（`nvidia/nemotron-3-ultra-550b-a55b` -> `minimaxai/minimax-m3.1-flash` -> `nvidia/nemotron-3.5-super-vl-120b-a12b`，可用 `NIM_CHAIN` 覆寫；每步最多 200 秒，整條鏈受 `NIM_TIMEOUT` 限制）；明確寫 `nim:<其他模型>` 時只跑該模型、不走備援鏈。`openrouter` 同樣為選用制：以 `--order copilot,codex,deepseek,openrouter` 加入，或在 `codex` 額度用盡時作為替代（例如 `--order copilot,deepseek,openrouter`）。`dsapi` 也是選用制（`--order copilot,codex,deepseek,dsapi`），且 `deepseek` 會自動備援到它（見下）。
+`nim` 也已列入預設順序（在 `deepseek` 之後，預設為 `copilot,codex,deepseek,agy,nim,openrouter`，`qwen` 可用時再加在最後），並帶有 3 個模型的備援鏈（`nvidia/nemotron-3-ultra-550b-a55b` -> `minimaxai/minimax-m3.1-flash` -> `nvidia/nemotron-3.5-super-vl-120b-a12b`，可用 `NIM_CHAIN` 覆寫；每步最多 200 秒，整條鏈受 `NIM_TIMEOUT` 限制）；明確寫 `nim:<其他模型>` 時只跑該模型、不走備援鏈。`openrouter` 自 2026-10-27 起同樣列入預設順序（在 `qwen` 之前），預設模型 `poolside/laguna-s-2.1:free` 與 `nim` 不同家族，兩者算作獨立的聲音；要排除它請明確指定 `--order`（例如 `--order copilot,codex,deepseek`）。`dsapi` 也是選用制（`--order copilot,codex,deepseek,dsapi`），且 `deepseek` 會自動備援到它（見下）。
 與其他 CLI 引擎不同，`deepseek`、`nim`、`openrouter` 與 `dsapi` 沒有 cwd、shell 或檔案存取權限 ——
 只看得到 prompt 文字本身，因此送給它們的 prompt 必須自帶完整脈絡。
 
@@ -60,7 +60,7 @@ flowchart TD
 
 請求送往 `https://openrouter.ai/api/v1/chat/completions`（`max_tokens` 1500，每次嘗試逾時 90 秒）。
 免費模型有速率限制，因此遇到 HTTP 404/429/5xx、逾時或空回覆時，引擎會依備援鏈往下試（最多 3 次）：
-`nvidia/nemotron-3-ultra-550b-a55b:free`、`poolside/laguna-s-2.1:free`、`cohere/north-mini-code:free`。
+`poolside/laguna-s-2.1:free`、`cohere/north-mini-code:free`、`nvidia/nemotron-3-ultra-550b-a55b:free`。
 指定的模型會先試，之後才是鏈上其餘模型。只含推理過程的回覆視為空回覆；開頭的 `<think>...</think>` 區塊會被移除。
 結果會標示為實際回答的模型（`openrouter:<model>`）；若全部失敗，失敗訊息會列出各模型與原因（429 顯示為 `rate-limited`）。
 其他錯誤（例如 401 金鑰無效）會立即結束備援鏈。
@@ -215,7 +215,7 @@ consult({
 })
 ```
 
-引擎順序可透過 `order` 引數或 `CONSULT_ORDER` 環境變數設定（預設為 `copilot,codex,deepseek`；`order` 與 `CONSULT_ORDER` 的項目都可寫成 `engine:model`；MCP 的 `order` 是字串陣列，無效的項目會被忽略並回報，若沒有任何有效項目則回傳錯誤）。失敗的引擎（配額耗盡、驗證失敗、逾時、輸出為空、非零結束代碼）會自動容錯移轉至下一個引擎；相關歷程紀錄會附加於結果之後。
+引擎順序可透過 `order` 引數或 `CONSULT_ORDER` 環境變數設定（預設為 `copilot,codex,deepseek,agy,nim,openrouter`；`order` 與 `CONSULT_ORDER` 的項目都可寫成 `engine:model`；MCP 的 `order` 是字串陣列，無效的項目會被忽略並回報，若沒有任何有效項目則回傳錯誤）。失敗的引擎（配額耗盡、驗證失敗、逾時、輸出為空、非零結束代碼）會自動容錯移轉至下一個引擎；相關歷程紀錄會附加於結果之後。
 
 ### `copilot_exec`
 
@@ -236,11 +236,28 @@ node consult-cli.js --dsapi-model M "prompt"    # 指定 dsapi 引擎的模型�
 node consult-cli.js --check-nim-models         # 立即強制執行 NIM 新模型檢查
 node consult-cli.js --prompt-file review.txt   # 從檔案讀取 prompt（"-" 代表標準輸入），不可與 prompt 文字並用。適用於 diff 等長 prompt，避免超出作業系統的命令列長度上限
 node consult-cli.js --out-dir /tmp/c "prompt"   # 每個引擎完成時即寫入 <dir>/<engine>.md，全部完成後寫入 <dir>/_done（檔名中的 : 與 / 等不安全字元會改為 _）
+node consult-cli.js --debate spec.json --out-dir /tmp/d   # 結構化辯論（見下方「辯論模式」）；印出 <dir>/digest.md 路徑與 TALLY 行
 node consult-cli.js --check-updates   # 立即檢查、印出結果後結束
 node consult-cli.js --update          # brew upgrade --cask <過期的 CLI>；git pull --ff-only（工作樹有未提交變更時拒絕）
 ```
 
 `--mode all` 時，`consult-cli` 會在每個引擎完成的當下依完成順序印出該引擎完整的 `## <engine>` 區段（回答或 `[failed] 原因`），最後才印 `[consult] mode: all | ...` 摘要行。各引擎逾時彼此獨立，慢的引擎不會拖延其他引擎。`consult-bridge` 仍回傳單一彙整結果，但使用相同的執行器（`lib/panel.js`）。
+
+### 辯論模式
+
+`consult-cli --debate <spec.json> --out-dir <dir>` 以固定流程進行兩輪辯論，並讓呼叫端的上下文保持精簡：完整回答寫入檔案，呼叫端只需讀 `digest.md`（5 個引擎約 1.5k token）。Spec：
+
+```json
+{ "question": "A or B?", "context": "選用的內嵌文字", "context_files": ["notes.md"],
+  "word_cap": 250, "rebuttal_cap": 150, "rounds": 2,
+  "stances": [ { "engine": "copilot", "stance": "argue for A" },
+               { "engine": "deepseek", "stance": "argue for B", "fallback": ["openrouter", "nim"] } ] }
+```
+
+- Prompt 一律自給自足（內嵌 `context` 加上 `context_files`，每檔 20 KB、總計 60 KB，截斷處會標記），因為 deepseek、nim、openrouter、qwen 沒有檔案存取權限。每則回覆必須以 `CLAIMS`（最多 3 點）/ `CONCEDES` / `BOTTOM LINE` 區塊結尾。
+- 第 1 輪：所有立場並行執行（`<dir>/r1/<engine>.md`，另有 `.prompt.md`）。第 2 輪（`rounds: 2`）：第 1 輪有回答的引擎各自收到自己的立場，加上其他引擎第 1 輪的結尾區塊（不含全文），並以 `FINAL PICK: <option> - <原因>` 結尾（`<dir>/r2/`）。
+- 缺少結尾區塊標為 `TAIL_MISSING`（其他引擎會看到該引擎最後約 120 字並加註），失敗的引擎標為 `ENGINE_FAILED: <原因>`；單一引擎失敗不會中止辯論。立場的 `fallback` 清單只重試一次，使用第一個尚未被使用的引擎，並標示為 `<fallback> (for <engine>)`。
+- `digest.md` 逐字收錄各引擎的結尾區塊與 FINAL PICK、檔案路徑與 `TALLY:` 行；`<dir>/_done` 最後寫入。Spec 錯誤時結束碼為 2。
 
 `consult-cli` 與 `consult-bridge` 啟動時會檢查（每 24 小時至多一次，快取於 `~/.cache/claude-bridges/updates.json`）引擎 CLI（brew 安裝的 cask 用 `brew outdated --cask --greedy`，否則用 `copilot version`）與本儲存庫（`git fetch` 後比對落後 commit 數）是否過期。頁尾取自上一次檢查的快取結果；快取過期時由分離的背景行程（CLI）或並行（MCP 伺服器）更新，因此不會拖慢或使諮詢失敗；僅在有過期項目時印出一行頁尾（MCP 伺服器則放在工具結果內）。未加 `--update` 不會安裝任何東西。
 
@@ -301,7 +318,7 @@ consult 小組的覆寫變數：`COPILOT_BRIDGE_BIN`、`CODEX_BRIDGE_BIN`、`AGY
 | `CONSULT_TIMEOUT` | `300` | 各引擎逾時時間（秒）（`nim` 不適用，請見 `NIM_TIMEOUT`） |
 | `CONSULT_MAX_OUTPUT_CHARS` | `50000` | 總輸出截斷上限字數 |
 | `CONSULT_PER_ENGINE_CHARS` | `20000` | `all` 模式下各引擎截斷字數 |
-| `CONSULT_ORDER` | `copilot,codex,deepseek` | 預設引擎順序 |
+| `CONSULT_ORDER` | `copilot,codex,deepseek,agy,nim,openrouter` | 預設引擎順序 |
 | `CONSULT_MODE` | `all` | 預設模式（`all` 或 `first`） |
 | `COPILOT_MODEL` | （未設 = auto） | 僅在設定時以 `--model` 傳入。若 Copilot 拒絕（如 Student 方案僅支援 auto），會改用 auto 重試一次並標示為 `copilot (auto; <model> unavailable on this plan)` |
 | `COPILOT_EFFORT` | （未設） | `--reasoning-effort none\|minimal\|low\|medium\|high\|xhigh\|max` |
@@ -318,7 +335,7 @@ consult 小組的覆寫變數：`COPILOT_BRIDGE_BIN`、`CODEX_BRIDGE_BIN`、`AGY
 | `NIM_BASE` | `https://integrate.api.nvidia.com` | NIM API 基底 URL |
 | `OPENROUTER_API_KEY` | （未設定） | OpenRouter 金鑰，優先於金鑰檔案 |
 | `OPENROUTER_KEY_PATH` | `~/.openrouter-key` | 未設 `OPENROUTER_API_KEY` 時讀取的金鑰檔案（取第一個 `sk-or-...` 字串） |
-| `OPENROUTER_MODEL` | `nvidia/nemotron-3-ultra-550b-a55b:free` | 順序項目與 `--openrouter-model` 都未指定時的預設 OpenRouter 模型 |
+| `OPENROUTER_MODEL` | `poolside/laguna-s-2.1:free` | 順序項目與 `--openrouter-model` 都未指定時的預設 OpenRouter 模型 |
 | `DEEPSEEK_API_KEY` | （未設定） | `dsapi` 使用的 DeepSeek 官方 API 金鑰，優先於金鑰檔案 |
 | `DSAPI_KEY_PATH` | `~/.deepseek-api-key` | 未設 `DEEPSEEK_API_KEY` 時讀取的金鑰檔案（取第一個 `sk-...` 字串） |
 | `DSAPI_MODEL` | `deepseek-flash` | 順序項目與 `--dsapi-model` 都未指定時的預設 `dsapi` 模型；必須是 flash ID（不含 `pro`/`reasoner`） |

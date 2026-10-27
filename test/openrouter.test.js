@@ -163,7 +163,7 @@ test("runSpec: openrouter:<model> is routed with its model", async () => {
 
 test("parseOrder: openrouter and openrouter:<model> entries", () => {
   assert.deepEqual(parseOrder("copilot,codex,deepseek,openrouter"), ["copilot", "codex", "deepseek", "openrouter"]);
-  assert.deepEqual(parseOrder("openrouter:poolside/laguna-s-2.1:free,codex"), ["openrouter:poolside/laguna-s-2.1:free", "codex"]);
+  assert.deepEqual(parseOrder("openrouter:cohere/north-mini-code:free,codex"), ["openrouter:cohere/north-mini-code:free", "codex"]);
   assert.deepEqual(parseOrderDetailed("openrouter:").dropped, ["openrouter:"]);
 });
 
@@ -172,8 +172,8 @@ test("parseOrder: openrouter:<default model> is the same entry as bare openroute
   assert.deepEqual(parseOrder("openrouter:env/m:free,openrouter", undefined, { openrouterModel: "env/m:free" }), ["openrouter"]);
 });
 
-test("default order does not include openrouter", () => {
-  assert.deepEqual(parseOrder(undefined), ["copilot", "codex", "deepseek", "agy", "nim"]);
+test("default order includes openrouter (after nim)", () => {
+  assert.deepEqual(parseOrder(undefined), ["copilot", "codex", "deepseek", "agy", "nim", "openrouter"]);
 });
 
 test("parseArgs: --openrouter-model", () => {

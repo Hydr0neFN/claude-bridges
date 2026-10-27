@@ -8,9 +8,12 @@
 // Usage: consult "<prompt>" | --prompt-file <path|-> [--mode all|first] [--order copilot,codex] [--cwd <dir>] [--out-dir <dir>]
 //        [--copilot-model M] [--copilot-effort E] [--codex-model M] [--codex-effort E] [--nim-model M] [--openrouter-model M] [--dsapi-model M]
 //        --order entries are `engine` or `engine:model`, e.g. nim:moonshotai/kimi-k3,codex (model wins over the flags)
+//        consult --debate <spec.json> --out-dir <dir>   (structured multi-round debate; writes <dir>/digest.md, prints its path + a TALLY line)
 //        consult --check-updates | --update | --check-nim-models | --refresh-nim-models
 
+import fs from "node:fs";
 import { runSpec, dsapiUsageNotice, qwenAvailable } from "./lib/engines.js";
+import { validateSpec, loadContext, runDebate } from "./lib/debate.js";
 import { parseArgs, parseOrderDetailed, resolvePrompt } from "./lib/args.js";
 import { runPanel, runChain, lastResortNote, formatSection, summaryLine, writeEngineResult, writeDone } from "./lib/panel.js";
 import { checkUpdates, spawnRefresh, settle, applyUpdates, formatFooter } from "./lib/updates.js";
@@ -47,19 +50,19 @@ if (args.refreshNimModels) {
 async function main() {
   let prompt;
   try {
-    prompt = resolvePrompt(args);
+    prompt = args.debate ? "" : resolvePrompt(args);
   } catch (e) {
     console.error(`consult: ${e.message}`);
     process.exit(2);
   }
-  if (!prompt) {
-    console.error('usage: consult "<prompt>" | --prompt-file <path|-> [--mode all|first] [--order copilot,codex] [--cwd <dir>] [--out-dir <dir>] [--nim-model M] [--openrouter-model M] [--dsapi-model M] | --check-updates | --update | --check-nim-models');
+  if (!prompt && !args.debate) {
+    console.error('usage: consult "<prompt>" | --prompt-file <path|-> [--mode all|first] [--order copilot,codex] [--cwd <dir>] [--out-dir <dir>] [--nim-model M] [--openrouter-model M] [--dsapi-model M] | --debate <spec.json> --out-dir <dir> | --check-updates | --update | --check-nim-models');
     process.exit(2);
   }
 
   // Default panel gains the local, private qwen engine only while it can run (outside the DOWTrade window, key present).
   // agy is in the default set only while it drains its remaining quota (owner 2026-10-27); drop it here and in lib/args.js once it reports quota exhausted.
-  const rawOrder = args.order || process.env.CONSULT_ORDER || (qwenAvailable() ? "copilot,codex,deepseek,agy,nim,qwen" : undefined);
+  const rawOrder = args.order || process.env.CONSULT_ORDER || (qwenAvailable() ? "copilot,codex,deepseek,agy,nim,openrouter,qwen" : undefined);
   const { order, dropped } = parseOrderDetailed(rawOrder, undefined, {
     nimModel: args.nimModel || process.env.NIM_MODEL,
     openrouterModel: args.openrouterModel || process.env.OPENROUTER_MODEL,
@@ -102,6 +105,27 @@ async function main() {
     if (written && nimGate?.text) nimGate.commit(); // only count a notice that was really delivered
     process.exit(code);
   };
+
+  if (args.debate) {
+    // Debate: spec problems are usage errors (exit 2); engine failures are contained inside runDebate.
+    let spec;
+    try {
+      if (!args.outDir) throw new Error("--debate needs --out-dir <dir>");
+      spec = validateSpec(JSON.parse(fs.readFileSync(args.debate, "utf8")));
+    } catch (e) {
+      console.error(`consult: ${e.message}`);
+      return finish(2);
+    }
+    const { digestPath, tally } = await runDebate({
+      spec,
+      outDir: args.outDir,
+      ctx: loadContext(spec),
+      run: (name, p) => runSpec(name, { prompt: p, cwd, timeoutSec: TIMEOUT_SEC }, opts),
+    });
+    console.log(`${digestPath}
+${tally}`);
+    return finish(0);
+  }
 
   if (mode === "first") {
     const { result: r, trail } = await runChain(order, run);

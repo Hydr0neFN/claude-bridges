@@ -40,7 +40,7 @@ The `consult` tool currently fans out to **five engines**:
 | `agy` | Antigravity / Gemini CLI | Google AI Plus (low quota); **in the default order while it drains its remaining quota (2026-10-27); removed once exhausted** |
 | `deepseek` | `deeperseeker` proxy over a DeepSeek web account (HTTP, not a CLI) | Free (throwaway account) |
 | `nim` | NVIDIA NIM hosted API (HTTP, not a CLI) | Free trial tier; in the default order, with a 3-model fallback chain |
-| `openrouter` | OpenRouter free models (HTTP, not a CLI) | Free (rate-limited); **opt-in (not in default order)** |
+| `openrouter` | OpenRouter free models (HTTP, not a CLI) | Free (rate-limited); in the default order (after `nim`), with a 3-model fallback chain |
 | `dsapi` | Official DeepSeek API, flash models only (HTTP, not a CLI) | Pay-per-token (cheap); **opt-in (not in default order)**, but also the automatic fallback of `deepseek` |
 
 `agy` was opt-in because its Google AI Plus quota is small; since 2026-10-27 it is in the default order until that quota is used up (before: `--order copilot,codex,deepseek,agy`)
@@ -48,8 +48,8 @@ or the MCP `order` argument, ideally once per review.
 
 `deepseek` is in the default `CONSULT_ORDER` (last, so in mode `first` it is only a fallback). It needs the
 `deeperseeker` proxy on `127.0.0.1:4000`; if the proxy is down or has no key, it falls back to the official API (`dsapi`, flash only, label `deepseek->dsapi`; see below), or fails soft
-if that has no key either, and the other engines still answer. `nim` is in the default order too (after `deepseek`, so the default panel is `copilot,codex,deepseek,agy,nim`, plus `qwen` when it can run); it walks a fallback chain, see below.
-`openrouter` is opt-in too: add it with `--order copilot,codex,deepseek,openrouter`, or use it as a replacement when `codex` is out of quota (e.g. `--order copilot,deepseek,openrouter`).
+if that has no key either, and the other engines still answer. `nim` is in the default order too (after `deepseek`, so the default panel is `copilot,codex,deepseek,agy,nim,openrouter`, plus `qwen` when it can run); it walks a fallback chain, see below.
+`openrouter` is in the default order too (last before `qwen`; since 2026-10-27, so the default panel is `copilot,codex,deepseek,agy,nim,openrouter`). Its default model (`poolside/laguna-s-2.1:free`) is a different family from `nim`'s, so the two count as separate voices. Drop it with an explicit `--order` (e.g. `--order copilot,codex,deepseek`).
 `dsapi` is opt-in as well (`--order copilot,codex,deepseek,dsapi`), and `deepseek` falls back to it on its own (see below).
 `qwen` is the local lab model on hgn-fw13, reached through its `llm-gate` (`FW13_LLM_URL`, lab key `~/.config/fw13/lab.key`; override with `QWEN_BASE`, `QWEN_KEY_PATH` / `QWEN_API_KEY`, `QWEN_MODEL`, `QWEN_MAX_TOKENS`). It is free and private, takes no `engine:model`, and names the model the gate serves in its section header (`qwen:<model>`). The box belongs to DOWTrade on weekdays 07:30-16:45 America/New_York: inside that window the engine reports `skipped: trading hours`, and a gate 503 is reported as `skipped: gate busy`. The default panel adds `qwen` last, after `nim`, only when it can run (outside the window and a key is present).
 Unlike the CLI engines, `deepseek`, `nim`, `openrouter` and `dsapi` get no cwd, shell or file access — they only ever see the prompt text, so give them self-contained prompts.
@@ -62,8 +62,8 @@ No key means the engine is reported as `[failed] no key`; the other engines stil
 
 Requests go to `https://openrouter.ai/api/v1/chat/completions` (`max_tokens` 1500, 90 s timeout per attempt).
 Free models are rate-limited, so the engine walks a fallback chain on HTTP 404/429/5xx, a timeout or an empty
-reply (at most 3 attempts): `nvidia/nemotron-3-ultra-550b-a55b:free`, `poolside/laguna-s-2.1:free`,
-`cohere/north-mini-code:free`. A requested model is tried first, then the rest of the chain. A reply with
+reply (at most 3 attempts): `poolside/laguna-s-2.1:free`, `cohere/north-mini-code:free`,
+`nvidia/nemotron-3-ultra-550b-a55b:free`. A requested model is tried first, then the rest of the chain. A reply with
 only reasoning counts as empty; a leading `<think>...</think>` block is stripped. The result is labelled with the
 model that answered (`openrouter:<model>`); if every attempt fails, the failure lists each model and why
 (a 429 shows as `rate-limited`). Any other error (e.g. 401 bad key) ends the chain at once.
@@ -245,7 +245,7 @@ consult({
 })
 ```
 
-Engine order configurable via `order` arg or `CONSULT_ORDER` env (default `copilot,codex,deepseek,agy,nim`); both accept `engine:model` entries (the MCP `order` is a list of strings; invalid entries are ignored and reported, and an order with no valid entry is an error). A failed engine (quota, auth, timeout, empty output, nonzero exit) fails over to the next; the trail is appended to the result.
+Engine order configurable via `order` arg or `CONSULT_ORDER` env (default `copilot,codex,deepseek,agy,nim,openrouter`); both accept `engine:model` entries (the MCP `order` is a list of strings; invalid entries are ignored and reported, and an order with no valid entry is an error). A failed engine (quota, auth, timeout, empty output, nonzero exit) fails over to the next; the trail is appended to the result.
 
 ### `copilot_exec`
 
@@ -266,11 +266,29 @@ node consult-cli.js --dsapi-model M "prompt"    # model for the dsapi engine (fl
 node consult-cli.js --check-nim-models         # force the NIM new-model check now
 node consult-cli.js --prompt-file review.txt   # prompt from a file ("-" = stdin); not combinable with prompt words. Use it for long prompts such as a diff, which can exceed the OS command-line limit
 node consult-cli.js --out-dir /tmp/c "prompt"   # also write <dir>/<engine>.md as each engine settles, <dir>/_done at the end (unsafe filename characters such as : and / become _)
+node consult-cli.js --debate spec.json --out-dir /tmp/d   # structured debate (see "Debate mode" below); prints <dir>/digest.md and a TALLY line
 node consult-cli.js --check-updates   # force a check now, print the result, exit
 node consult-cli.js --update          # brew upgrade --cask <outdated CLIs>; git pull --ff-only (refuses on a dirty repo)
 ```
 
 In `--mode all`, `consult-cli` prints each engine's whole `## <engine>` section (answer or `[failed] reason`) the moment it settles, in completion order, then the `[consult] mode: all | ...` summary last. Per-engine timeouts are independent, so a slow engine never delays the others. `consult-bridge` returns one aggregated result but uses the same runner (`lib/panel.js`).
+
+### Debate mode
+
+`consult-cli --debate <spec.json> --out-dir <dir>` runs a deterministic two-round debate and keeps the caller's context small: the full
+answers go to files, and the caller reads only `digest.md` (about 1.5k tokens for 5 engines). Spec:
+
+```json
+{ "question": "A or B?", "context": "optional inline text", "context_files": ["notes.md"],
+  "word_cap": 250, "rebuttal_cap": 150, "rounds": 2,
+  "stances": [ { "engine": "copilot", "stance": "argue for A" },
+               { "engine": "deepseek", "stance": "argue for B", "fallback": ["openrouter", "nim"] } ] }
+```
+
+- Prompts are self-contained (inline `context` plus `context_files`, 20 KB per file and 60 KB total, truncation marked), because deepseek, nim, openrouter and qwen have no file access. Every reply must end with a `CLAIMS` (max 3) / `CONCEDES` / `BOTTOM LINE` block.
+- Round 1: all stances run in parallel (`<dir>/r1/<engine>.md`, plus `.prompt.md`). Round 2 (`rounds: 2`): each engine that answered gets its stance plus the other engines' round-1 tail blocks (not their full text) and ends with `FINAL PICK: <option> - <reason>` (`<dir>/r2/`).
+- A missing tail is flagged `TAIL_MISSING` (the other engines then see that engine's last ~120 words, marked), a failed engine `ENGINE_FAILED: <reason>`; one failing engine never aborts the debate. A stance's `fallback` list is tried once, on the first engine not already used, and labelled `<fallback> (for <engine>)`.
+- `digest.md` holds each engine's tails and FINAL PICK verbatim, the file paths and a `TALLY:` line; `<dir>/_done` is written last. Spec errors exit 2.
 
 On start, both `consult-cli` and `consult-bridge` check (at most once per 24h, cache in `~/.cache/claude-bridges/updates.json`) whether the engine CLIs (`brew outdated --cask --greedy` for brew-installed casks; `copilot version` otherwise) or this repo (`git fetch`, behind-count) are outdated. The footer comes from the previous check's cached result; a stale cache is refreshed by a detached background process (CLI) or concurrently (MCP server), so a consult is never delayed or failed. It prints one footer line only when something is outdated (in the tool result for the MCP server). Nothing is installed without `--update`.
 
@@ -331,7 +349,7 @@ Overrides for the consult panel: `COPILOT_BRIDGE_BIN`, `CODEX_BRIDGE_BIN`, `AGY_
 | `CONSULT_TIMEOUT` | `300` | Per-engine timeout in seconds (not used by `nim`, see `NIM_TIMEOUT`) |
 | `CONSULT_MAX_OUTPUT_CHARS` | `50000` | Total output truncation cap |
 | `CONSULT_PER_ENGINE_CHARS` | `20000` | Per-engine truncation in `all` mode |
-| `CONSULT_ORDER` | `copilot,codex,deepseek,agy,nim` | Default engine order (the CLI adds `qwen` last when it can run) |
+| `CONSULT_ORDER` | `copilot,codex,deepseek,agy,nim,openrouter` | Default engine order (the CLI adds `qwen` last when it can run) |
 | `CONSULT_MODE` | `all` | Default mode (`all` or `first`) |
 | `COPILOT_MODEL` | (unset = auto) | Passed as `--model` only when set. If Copilot rejects it (auto-only plans such as Student), retried once on auto and labelled `copilot (auto; <model> unavailable on this plan)` |
 | `COPILOT_EFFORT` | (unset) | `--reasoning-effort none\|minimal\|low\|medium\|high\|xhigh\|max` |
@@ -352,7 +370,7 @@ Overrides for the consult panel: `COPILOT_BRIDGE_BIN`, `CODEX_BRIDGE_BIN`, `AGY_
 | `NIM_MODELS_CHECK_DAYS` | `14` | Interval of the NIM new-model check (positive number of days) |
 | `OPENROUTER_API_KEY` | (unset) | OpenRouter key; takes precedence over the key file |
 | `OPENROUTER_KEY_PATH` | `~/.openrouter-key` | Key file read when `OPENROUTER_API_KEY` is unset (the first `sk-or-...` token is used) |
-| `OPENROUTER_MODEL` | `nvidia/nemotron-3-ultra-550b-a55b:free` | Default OpenRouter model when neither the order entry nor `--openrouter-model` sets one |
+| `OPENROUTER_MODEL` | `poolside/laguna-s-2.1:free` | Default OpenRouter model when neither the order entry nor `--openrouter-model` sets one |
 | `DEEPSEEK_API_KEY` | (unset) | Official DeepSeek API key for `dsapi`; takes precedence over the key file |
 | `DSAPI_KEY_PATH` | `~/.deepseek-api-key` | Key file read when `DEEPSEEK_API_KEY` is unset (the first `sk-...` token is used) |
 | `DSAPI_MODEL` | `deepseek-flash` | Default `dsapi` model when neither the order entry nor `--dsapi-model` sets one; must be a flash id (no `pro`/`reasoner`) |
