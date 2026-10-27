@@ -8,7 +8,7 @@
 // Usage: consult "<prompt>" | --prompt-file <path|-> [--mode all|first] [--order copilot,codex] [--cwd <dir>] [--out-dir <dir>]
 //        [--copilot-model M] [--copilot-effort E] [--codex-model M] [--codex-effort E] [--nim-model M] [--openrouter-model M] [--dsapi-model M]
 //        --order entries are `engine` or `engine:model`, e.g. nim:moonshotai/kimi-k3,codex (model wins over the flags)
-//        consult --debate <spec.json> --out-dir <dir>   (structured multi-round debate; writes <dir>/digest.md, prints its path + a TALLY line)
+//        consult --debate <spec.json> --out-dir <dir>   (structured debate, up to 3 rounds; writes <dir>/digest.md, prints its path + a TALLY line)
 //        consult --check-updates | --update | --check-nim-models | --refresh-nim-models
 
 import fs from "node:fs";

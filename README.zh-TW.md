@@ -245,17 +245,19 @@ node consult-cli.js --update          # brew upgrade --cask <過期的 CLI>；gi
 
 ### 辯論模式
 
-`consult-cli --debate <spec.json> --out-dir <dir>` 以固定流程進行兩輪辯論，並讓呼叫端的上下文保持精簡：完整回答寫入檔案，呼叫端只需讀 `digest.md`（5 個引擎約 1.5k token）。Spec：
+`consult-cli --debate <spec.json> --out-dir <dir>` 以固定流程進行最多三輪辯論，並讓呼叫端的上下文保持精簡：完整回答寫入檔案，呼叫端只需讀 `digest.md`（5 個引擎約 1.5k token）。Spec：
 
 ```json
 { "question": "A or B?", "context": "選用的內嵌文字", "context_files": ["notes.md"],
-  "word_cap": 250, "rebuttal_cap": 150, "rounds": 2,
+  "word_cap": 250, "rebuttal_cap": 150, "cross_cap": 100, "rounds": 3,
   "stances": [ { "engine": "copilot", "stance": "argue for A" },
                { "engine": "deepseek", "stance": "argue for B", "fallback": ["openrouter", "nim"] } ] }
 ```
 
 - Prompt 一律自給自足（內嵌 `context` 加上 `context_files`，每檔 20 KB、總計 60 KB，截斷處會標記），因為 deepseek、nim、openrouter、qwen 沒有檔案存取權限。每則回覆必須以 `CLAIMS`（最多 3 點）/ `CONCEDES` / `BOTTOM LINE` 區塊結尾。
-- 第 1 輪：所有立場並行執行（`<dir>/r1/<engine>.md`，另有 `.prompt.md`）。第 2 輪（`rounds: 2`）：第 1 輪有回答的引擎各自收到自己的立場，加上其他引擎第 1 輪的結尾區塊（不含全文），並以 `FINAL PICK: <option> - <原因>` 結尾（`<dir>/r2/`）。
+- 第 1 輪：所有立場並行執行（`<dir>/r1/<engine>.md`，另有 `.prompt.md`）。第 2 輪（`rounds: 2`）：第 1 輪有回答的引擎各自收到自己的立場，加上其他引擎第 1 輪的結尾區塊（不含全文），並以 `FINAL PICK: <option> - <原因>` 結尾（`<dir>/r2/`）。第 1 輪同樣以開場 `FINAL PICK` 結尾。
+- 防從眾（第 2、3 輪）：對手以 `Debater N` 呈現（不含引擎名稱、票數或多數暗示），prompt 明說「多數同意不是證據」。每則回覆加上 `CHANGED BECAUSE:`（哪位 Debater 的哪項主張改變了立場，或 `unchanged`）與 `WOULD CHANGE MY MIND IF:`。
+- 第 3 輪（`rounds: 3`，字數上限 `cross_cap` 預設 100）僅在第 2 輪 FINAL PICK 仍不一致時執行；每位有 pick 的辯手只會看到「pick 與自己不同」的辯手的主張並只回應這些（`<dir>/r3/`）；否則略過，digest 會說明原因。digest 另列每個引擎的 pick 軌跡，例如 `nim: D -> A -> A (R2 changed: Debater 2 claim 1)`；沒說明理由就改變 pick 會標記 `NO REASON GIVEN`，TALLY 採用各引擎最後一次的 pick。借用的做法：獨立第一輪與匿名化同儕（Du et al. 2023；arXiv 2510.07517）、批判而非求共識的提示（Free-MAD，arXiv 2509.11035）；也有論文指出單純多數決即可達到辯論的多數增益，因此 digest 保留原始 pick 與軌跡，而非由裁判下結論。
 - 缺少結尾區塊標為 `TAIL_MISSING`（其他引擎會看到該引擎最後約 120 字並加註），失敗的引擎標為 `ENGINE_FAILED: <原因>`；單一引擎失敗不會中止辯論。立場的 `fallback` 清單只重試一次，使用第一個尚未被使用的引擎，並標示為 `<fallback> (for <engine>)`。
 - `digest.md` 逐字收錄各引擎的結尾區塊與 FINAL PICK、檔案路徑與 `TALLY:` 行；`<dir>/_done` 最後寫入。Spec 錯誤時結束碼為 2。
 
