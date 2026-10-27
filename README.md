@@ -39,7 +39,7 @@ The `consult` tool currently fans out to **five engines**:
 | `codex` | OpenAI Codex CLI (`codex exec`) | Free (ChatGPT) |
 | `agy` | Antigravity / Gemini CLI | Google AI Plus (low quota); **opt-in (not in default order)** |
 | `deepseek` | `deeperseeker` proxy over a DeepSeek web account (HTTP, not a CLI) | Free (throwaway account) |
-| `nim` | NVIDIA NIM hosted API (HTTP, not a CLI) | Free trial tier |
+| `nim` | NVIDIA NIM hosted API (HTTP, not a CLI) | Free trial tier; in the default order, with a 3-model fallback chain |
 | `openrouter` | OpenRouter free models (HTTP, not a CLI) | Free (rate-limited); **opt-in (not in default order)** |
 | `dsapi` | Official DeepSeek API, flash models only (HTTP, not a CLI) | Pay-per-token (cheap); **opt-in (not in default order)**, but also the automatic fallback of `deepseek` |
 
@@ -48,10 +48,10 @@ or the MCP `order` argument, ideally once per review.
 
 `deepseek` is in the default `CONSULT_ORDER` (last, so in mode `first` it is only a fallback). It needs the
 `deeperseeker` proxy on `127.0.0.1:4000`; if the proxy is down or has no key, it falls back to the official API (`dsapi`, flash only, label `deepseek->dsapi`; see below), or fails soft
-if that has no key either, and the other engines still answer. `nim` is opt-in: pass `--order ...,nim` or set `CONSULT_ORDER` to include it.
+if that has no key either, and the other engines still answer. `nim` is in the default order too (after `deepseek`, so the default panel is `copilot,codex,deepseek,nim`, plus `qwen` when it can run); it walks a fallback chain, see below.
 `openrouter` is opt-in too: add it with `--order copilot,codex,deepseek,openrouter`, or use it as a replacement when `codex` is out of quota (e.g. `--order copilot,deepseek,openrouter`).
 `dsapi` is opt-in as well (`--order copilot,codex,deepseek,dsapi`), and `deepseek` falls back to it on its own (see below).
-`qwen` is the local lab model on hgn-fw13, reached through its `llm-gate` (`FW13_LLM_URL`, lab key `~/.config/fw13/lab.key`; override with `QWEN_BASE`, `QWEN_KEY_PATH` / `QWEN_API_KEY`, `QWEN_MODEL`, `QWEN_MAX_TOKENS`). It is free and private, takes no `engine:model`, and names the model the gate serves in its section header (`qwen:<model>`). The box belongs to DOWTrade on weekdays 07:30-16:45 America/New_York: inside that window the engine reports `skipped: trading hours`, and a gate 503 is reported as `skipped: gate busy`. The default panel adds `qwen` after `deepseek` only when it can run (outside the window and a key is present).
+`qwen` is the local lab model on hgn-fw13, reached through its `llm-gate` (`FW13_LLM_URL`, lab key `~/.config/fw13/lab.key`; override with `QWEN_BASE`, `QWEN_KEY_PATH` / `QWEN_API_KEY`, `QWEN_MODEL`, `QWEN_MAX_TOKENS`). It is free and private, takes no `engine:model`, and names the model the gate serves in its section header (`qwen:<model>`). The box belongs to DOWTrade on weekdays 07:30-16:45 America/New_York: inside that window the engine reports `skipped: trading hours`, and a gate 503 is reported as `skipped: gate busy`. The default panel adds `qwen` last, after `nim`, only when it can run (outside the window and a key is present).
 Unlike the CLI engines, `deepseek`, `nim`, `openrouter` and `dsapi` get no cwd, shell or file access — they only ever see the prompt text, so give them self-contained prompts.
 
 ### `openrouter` (OpenRouter free models)
@@ -116,6 +116,20 @@ node consult-cli.js --order nim:moonshotai/kimi-k3,nim:z-ai/glm-5.3,codex "promp
 ```
 
 Model precedence for `nim`: `engine:model` in the order, then `--nim-model`, then `NIM_MODEL`, then the built-in default.
+
+**Fallback chain.** Free-tier NIM models stall, vanish (HTTP 404, or 410 after end of life) or return reasoning only, so a bare `nim`
+(and a model set by `--nim-model` / `NIM_MODEL`, or `nim:<that default>`) walks a chain, starting with the requested model:
+`nvidia/nemotron-3-ultra-550b-a55b` -> `minimaxai/minimax-m3.1-flash` -> `nvidia/nemotron-3.5-super-vl-120b-a12b` (3 attempts at most;
+override the list with `NIM_CHAIN=a/x,b/y,c/z`). It steps past 404, 410, 5xx, 429 (after the usual single retry), timeouts, network errors,
+gateway errors, empty answers and reasoning-only answers; it stops on 400/401/402/403 and other 4xx (another model would fail the same way).
+The result is labelled with the model that answered (`nim:<model>`); if every attempt fails the reason lists each attempt, and if the only
+output was reasoning, the first reasoning-only reply is shown as a last resort. An **explicit** `nim:<other model>` in the order runs only
+that model, with the whole timeout and no chain, so single-model evaluations stay honest. Time budget: each attempt gets at most 200 s
+(`NIM_ATTEMPT_TIMEOUT_SEC`), and the whole chain stays within `NIM_TIMEOUT` (default and maximum 600 s, so 3 x 200 s); a later step with less than
+15 s left is skipped (the first step always runs). The chain was picked from an eval on 2026-10-27 (code-review prompt with planted bugs): ultra answered in 27-79 s,
+minimax-m3.1-flash in 93 s, super-vl in 57 s, all finding the bugs; glm-5.3 (396 s), glm-5.3-flash (319 s) and step-5-preview (228 s) were too
+slow for a 200 s step, deepseek-v4.1-flash answered 504, kimi-k3 410 (end of life), kimi-k2.6 404, and nemotron-3.5-bolt-e4b answered weakly. Latency varies a lot run
+to run (the free queue is shared), which is why the chain mixes vendors.
 If a model returns only reasoning and no final answer, the section starts with `[reasoning only: ...]`;
 a `[truncated: hit max_tokens]` line marks cut-off answers (raise `NIM_MAX_TOKENS`); a truncated answer still counts as an answer.
 Only a reasoning-only reply is shown in `--mode all` but fails over in `--mode first`, where the chain moves on to the next engine
@@ -149,8 +163,8 @@ response detail. Neither is retried.
 
 When consult runs as the MCP `consult-bridge`, its registration needs `"timeout": 660000` or more for `nim` to use the full
 10 minutes (the registration example below uses that value). In `--mode first` the engines run one after another, so a
-stalled `nim` holds up the chain for up to 600 s and `nim` plus a fallback can exceed 660 s: put `nim` last in the order,
-or use `--mode all` (parallel).
+stalled `nim` (all three chain steps) holds up the chain for up to 600 s and `nim` plus a fallback can exceed 660 s: keep `nim` last in the order
+(it is last, before `qwen`, in the default), or use `--mode all` (parallel, the default).
 
 #### Bi-weekly new-model check
 
@@ -231,7 +245,7 @@ consult({
 })
 ```
 
-Engine order configurable via `order` arg or `CONSULT_ORDER` env (default `copilot,codex,deepseek`); both accept `engine:model` entries (the MCP `order` is a list of strings; invalid entries are ignored and reported, and an order with no valid entry is an error). A failed engine (quota, auth, timeout, empty output, nonzero exit) fails over to the next; the trail is appended to the result.
+Engine order configurable via `order` arg or `CONSULT_ORDER` env (default `copilot,codex,deepseek,nim`); both accept `engine:model` entries (the MCP `order` is a list of strings; invalid entries are ignored and reported, and an order with no valid entry is an error). A failed engine (quota, auth, timeout, empty output, nonzero exit) fails over to the next; the trail is appended to the result.
 
 ### `copilot_exec`
 
@@ -317,7 +331,7 @@ Overrides for the consult panel: `COPILOT_BRIDGE_BIN`, `CODEX_BRIDGE_BIN`, `AGY_
 | `CONSULT_TIMEOUT` | `300` | Per-engine timeout in seconds (not used by `nim`, see `NIM_TIMEOUT`) |
 | `CONSULT_MAX_OUTPUT_CHARS` | `50000` | Total output truncation cap |
 | `CONSULT_PER_ENGINE_CHARS` | `20000` | Per-engine truncation in `all` mode |
-| `CONSULT_ORDER` | `copilot,codex,deepseek` | Default engine order |
+| `CONSULT_ORDER` | `copilot,codex,deepseek,nim` | Default engine order (the CLI adds `qwen` last when it can run) |
 | `CONSULT_MODE` | `all` | Default mode (`all` or `first`) |
 | `COPILOT_MODEL` | (unset = auto) | Passed as `--model` only when set. If Copilot rejects it (auto-only plans such as Student), retried once on auto and labelled `copilot (auto; <model> unavailable on this plan)` |
 | `COPILOT_EFFORT` | (unset) | `--reasoning-effort none\|minimal\|low\|medium\|high\|xhigh\|max` |
@@ -330,7 +344,8 @@ Overrides for the consult panel: `COPILOT_BRIDGE_BIN`, `CODEX_BRIDGE_BIN`, `AGY_
 | `DEEPSEEKER_ENV_PATH` | `~/Claude/deeperseeker/.env` | Where to read the key from when the env var is unset |
 | `NIM_API_KEY` | (unset) | NVIDIA NIM key; takes precedence over the key file |
 | `NIM_KEY_PATH` | `~/.nvidia-nim-key` | Key file read when `NIM_API_KEY` is unset |
-| `NIM_MODEL` | `nvidia/nemotron-3-ultra-550b-a55b` | Default NIM model when neither the order entry nor `--nim-model` sets one |
+| `NIM_MODEL` | `nvidia/nemotron-3-ultra-550b-a55b` | Default NIM model when neither the order entry nor `--nim-model` sets one (first step of the fallback chain) |
+| `NIM_CHAIN` | `nvidia/nemotron-3-ultra-550b-a55b,minimaxai/minimax-m3.1-flash,nvidia/nemotron-3.5-super-vl-120b-a12b` | Comma list of models the fallback chain walks after the requested one (3 attempts at most; each step 200 s at most, whole chain within `NIM_TIMEOUT`) |
 | `NIM_BASE` | `https://integrate.api.nvidia.com` | NIM API base URL |
 | `NIM_MAX_TOKENS` | `8192` | `max_tokens` sent to NIM |
 | `NIM_TIMEOUT` | `600` | NIM timeout in seconds (positive number); capped at 600, ignores `CONSULT_TIMEOUT`. MCP registrations need `"timeout": 660000` or more to use all of it |

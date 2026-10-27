@@ -48,7 +48,7 @@ flowchart TD
 
 `deepseek` 已列入預設的 `CONSULT_ORDER`（排在最後，因此在 `first` 模式下僅作為備援）。它需要 `deeperseeker` proxy
 在 `127.0.0.1:4000` 運作；若 proxy 未啟動或沒有金鑰，會自動備援到官方 API（`dsapi`，僅限 flash，標示 `deepseek->dsapi`，見下），若也沒有金鑰則軟性失敗，其他引擎仍會照常回答。
-`nim` 仍為選用制：須以 `--order ...,nim` 指定，或將其寫入 `CONSULT_ORDER`。`openrouter` 同樣為選用制：以 `--order copilot,codex,deepseek,openrouter` 加入，或在 `codex` 額度用盡時作為替代（例如 `--order copilot,deepseek,openrouter`）。`dsapi` 也是選用制（`--order copilot,codex,deepseek,dsapi`），且 `deepseek` 會自動備援到它（見下）。
+`nim` 也已列入預設順序（在 `deepseek` 之後，預設為 `copilot,codex,deepseek,nim`，`qwen` 可用時再加在最後），並帶有 3 個模型的備援鏈（`nvidia/nemotron-3-ultra-550b-a55b` -> `minimaxai/minimax-m3.1-flash` -> `nvidia/nemotron-3.5-super-vl-120b-a12b`，可用 `NIM_CHAIN` 覆寫；每步最多 200 秒，整條鏈受 `NIM_TIMEOUT` 限制）；明確寫 `nim:<其他模型>` 時只跑該模型、不走備援鏈。`openrouter` 同樣為選用制：以 `--order copilot,codex,deepseek,openrouter` 加入，或在 `codex` 額度用盡時作為替代（例如 `--order copilot,deepseek,openrouter`）。`dsapi` 也是選用制（`--order copilot,codex,deepseek,dsapi`），且 `deepseek` 會自動備援到它（見下）。
 與其他 CLI 引擎不同，`deepseek`、`nim`、`openrouter` 與 `dsapi` 沒有 cwd、shell 或檔案存取權限 ——
 只看得到 prompt 文字本身，因此送給它們的 prompt 必須自帶完整脈絡。
 

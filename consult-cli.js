@@ -58,7 +58,7 @@ async function main() {
   }
 
   // Default panel gains the local, private qwen engine only while it can run (outside the DOWTrade window, key present).
-  const rawOrder = args.order || process.env.CONSULT_ORDER || (qwenAvailable() ? "copilot,codex,deepseek,qwen" : undefined);
+  const rawOrder = args.order || process.env.CONSULT_ORDER || (qwenAvailable() ? "copilot,codex,deepseek,nim,qwen" : undefined);
   const { order, dropped } = parseOrderDetailed(rawOrder, undefined, {
     nimModel: args.nimModel || process.env.NIM_MODEL,
     openrouterModel: args.openrouterModel || process.env.OPENROUTER_MODEL,

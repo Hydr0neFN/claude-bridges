@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import { parseOrder, parseOrderDetailed, resolvePrompt, parseArgs, nonBlank } from "../lib/args.js";
 import {
-  ENGINES, DEFAULT_NIM_MODEL, nimTimeoutSec, resolveNimKey, extractAnswer, redact, retryDelayMs, parseSpec, runSpec,
+  ENGINES, DEFAULT_NIM_MODEL, NIM_CHAIN, NIM_ATTEMPT_TIMEOUT_SEC, nimChain, nimModels, nimTimeoutSec, resolveNimKey, extractAnswer, redact, retryDelayMs, parseSpec, runSpec,
 } from "../lib/engines.js";
 import { safeFileName, writeEngineResult, runChain, isFinal, formatSection, lastResortNote, authHint } from "../lib/panel.js";
 
@@ -30,7 +30,8 @@ const sleeper = () => {
   fn.slept = [];
   return fn;
 };
-const envWithKey = { NIM_API_KEY: FAKE_KEY };
+// A one-model chain keeps the single-request tests below single-request; chain behaviour has its own tests at the end.
+const envWithKey = { NIM_API_KEY: FAKE_KEY, NIM_CHAIN: DEFAULT_NIM_MODEL };
 
 test("resolveNimKey: env > NIM_KEY_PATH file > home default > missing", () => {
   const files = { "/custom/key": " from-custom \n", [path.join("/h", ".nvidia-nim-key")]: "from-home\n" };
@@ -239,7 +240,7 @@ test("parseOrder: engine:model specs, filtering, dedupe, default", () => {
   assert.deepEqual(parseOrder("agy:x,grok:y,codex:gpt,copilot:m,deepseek:v"), ["codex:gpt", "copilot:m", "deepseek:v"]);
   assert.deepEqual(parseOrder("nim:,nim,nope:x,:y"), ["nim"]);
   assert.deepEqual(parseOrder("nim:a,codex,nim:a,codex,nim"), ["nim:a", "codex", "nim"]);
-  assert.deepEqual(parseOrder(""), ["copilot", "codex", "deepseek"]);
+  assert.deepEqual(parseOrder(""), ["copilot", "codex", "deepseek", "nim"]);
 });
 
 test("runSpec: nim:a/b routes to nim with model a/b and flag model as fallback", async () => {
@@ -277,7 +278,7 @@ test("safeFileName / writeEngineResult: spec names stay in one flat dir", () => 
 test("parseOrderDetailed: reports dropped entries, ignores empty segments", () => {
   assert.deepEqual(parseOrderDetailed("codex,nope,agy:x,,nim:a/b"), { order: ["codex", "nim:a/b"], dropped: ["nope", "agy:x"] });
   assert.deepEqual(parseOrderDetailed("agy:x"), { order: [], dropped: ["agy:x"] });
-  assert.deepEqual(parseOrderDetailed(undefined), { order: ["copilot", "codex", "deepseek"], dropped: [] });
+  assert.deepEqual(parseOrderDetailed(undefined), { order: ["copilot", "codex", "deepseek", "nim"], dropped: [] });
 });
 
 test("resolvePrompt: words, --prompt-file, stdin, and misuse", () => {
@@ -599,4 +600,168 @@ test("nim stream: a cut-off stream with only reasoning keeps the truncation note
   const r = await runNim(f, { timeoutSec: 9 });
   assert.equal(r.degraded, true);
   assert.equal(r.body, "[reasoning only: model returned no final answer]\n\nmulling\n\n[truncated: timed out after 9s]");
+});
+
+// ---- fallback chain ----
+const [C1, C2, C3] = NIM_CHAIN;
+const chainEnv = { NIM_API_KEY: FAKE_KEY }; // no NIM_CHAIN: the built-in chain
+const ok200 = (text) => () => jsonRes(reply({ content: text }));
+const status = (code, body = "x") => () => new Response(body, { status: code });
+const calledModels = (f) => f.calls.map((c) => c.body.model);
+
+test("nim chain: built-in chain is 3 distinct models led by the default", () => {
+  assert.equal(NIM_CHAIN.length, 3);
+  assert.equal(new Set(NIM_CHAIN).size, 3);
+  assert.equal(C1, DEFAULT_NIM_MODEL);
+  assert.deepEqual(nimModels(C1), [C1, C2, C3]);
+  assert.deepEqual(nimModels(C3), [C3, C1, C2]);
+  assert.deepEqual(nimModels("other/m"), ["other/m", C1, C2]); // at most 3
+});
+
+test("nim chain: NIM_CHAIN env overrides the list; blanks ignored", () => {
+  assert.deepEqual(nimChain({ NIM_CHAIN: " a/x , b/y,, " }), ["a/x", "b/y"]);
+  assert.deepEqual(nimChain({ NIM_CHAIN: " , " }), NIM_CHAIN);
+  assert.deepEqual(nimModels("a/x", { NIM_CHAIN: "a/x,b/y" }), ["a/x", "b/y"]);
+});
+
+test("nim chain: first model answering -> one call, label names it", async () => {
+  const f = fakeFetch([ok200("hi")]);
+  const r = await ENGINES.nim({ prompt: "p", env: chainEnv, fetchImpl: f, sleep: sleeper() });
+  assert.deepEqual(calledModels(f), [C1]);
+  assert.equal(r.ok, true);
+  assert.equal(r.engine, `nim:${C1}`);
+});
+
+test("nim chain: steps past 404, 410, 5xx, 429 (after its retry); the label names the model that answered", async () => {
+  for (const code of [404, 410, 500, 503, 429]) {
+    const f = fakeFetch([status(code), status(code), ok200("from next")]);
+    const r = await ENGINES.nim({ prompt: "p", env: chainEnv, fetchImpl: f, sleep: sleeper() });
+    assert.equal(r.ok, true, String(code));
+    assert.equal(r.body, "from next");
+    // a 429 is retried once on the same model before stepping on
+    if (code === 429) {
+      assert.deepEqual(calledModels(f), [C1, C1, C2]);
+      assert.equal(r.engine, `nim:${C2}`);
+    } else {
+      assert.deepEqual(calledModels(f), [C1, C2, C3]);
+      assert.equal(r.engine, `nim:${C3}`);
+    }
+  }
+});
+
+test("nim chain: steps past a gateway 504, a network error and an empty answer", async () => {
+  const f = fakeFetch([status(504), () => { throw new TypeError("fetch failed"); }, ok200("third")]);
+  const r = await ENGINES.nim({ prompt: "p", env: chainEnv, fetchImpl: f, sleep: sleeper() });
+  assert.deepEqual(calledModels(f), [C1, C2, C3]);
+  assert.equal(r.engine, `nim:${C3}`);
+  const g = fakeFetch([ok200(""), ok200("second")]);
+  const r2 = await ENGINES.nim({ prompt: "p", env: chainEnv, fetchImpl: g, sleep: sleeper() });
+  assert.equal(r2.engine, `nim:${C2}`);
+});
+
+test("nim chain: a reasoning-only reply steps on; a later real answer wins", async () => {
+  const f = fakeFetch([() => jsonRes(reply({ content: "", reasoning_content: "thinking" })), ok200("real")]);
+  const r = await ENGINES.nim({ prompt: "p", env: chainEnv, fetchImpl: f, sleep: sleeper() });
+  assert.deepEqual(calledModels(f), [C1, C2]);
+  assert.equal(r.engine, `nim:${C2}`);
+  assert.equal(r.degraded, undefined);
+});
+
+test("nim chain: reasoning-only everywhere -> the first reasoning-only reply as a last resort", async () => {
+  const f = fakeFetch([
+    () => jsonRes(reply({ content: "", reasoning_content: "first thoughts" })),
+    status(404),
+    () => jsonRes(reply({ content: "", reasoning_content: "other thoughts" })),
+  ]);
+  const r = await ENGINES.nim({ prompt: "p", env: chainEnv, fetchImpl: f, sleep: sleeper() });
+  assert.equal(f.calls.length, 3);
+  assert.equal(r.ok, true);
+  assert.equal(r.degraded, true);
+  assert.equal(r.engine, `nim:${C1}`);
+  assert.match(r.body, /first thoughts/);
+});
+
+test("nim chain: auth and bad-request failures end the chain", async () => {
+  for (const code of [400, 401, 403]) {
+    const f = fakeFetch([status(code, "denied"), ok200("never")]);
+    const r = await ENGINES.nim({ prompt: "p", env: chainEnv, fetchImpl: f, sleep: sleeper() });
+    assert.equal(r.ok, false, String(code));
+    assert.equal(f.calls.length, 1, String(code));
+  }
+});
+
+test("nim chain: all fail -> one failure listing every attempt, labelled with the requested model", async () => {
+  const f = fakeFetch([status(404), status(500), status(410)]);
+  const r = await ENGINES.nim({ prompt: "p", env: chainEnv, fetchImpl: f, sleep: sleeper() });
+  assert.equal(r.ok, false);
+  assert.equal(r.engine, `nim:${C1}`);
+  for (const [m, code] of [[C1, "404"], [C2, "500"], [C3, "410"]]) assert.ok(r.reason.includes(`${m}: HTTP ${code}`), m);
+});
+
+test("nim chain: explicit nim:<other> runs only that model; nim:<default> and bare nim chain", async () => {
+  const f = fakeFetch([status(404), ok200("never")]);
+  const r = await runSpec("nim:other/model", { prompt: "p", env: chainEnv, fetchImpl: f, sleep: sleeper() });
+  assert.equal(r.ok, false);
+  assert.deepEqual(calledModels(f), ["other/model"]);
+  assert.equal(r.engine, "nim:other/model");
+  assert.ok(!r.reason.includes("; ")); // plain single-model failure, no attempt list
+
+  const g = fakeFetch([status(404), ok200("chained")]);
+  const r2 = await runSpec(`nim:${C1}`, { prompt: "p", env: chainEnv, fetchImpl: g, sleep: sleeper() });
+  assert.deepEqual(calledModels(g), [C1, C2]);
+  assert.equal(r2.engine, `nim:${C2}`);
+});
+
+test("nim chain: a flag/env model (not explicit) starts the chain; NIM_MODEL is the default", async () => {
+  const f = fakeFetch([status(404), ok200("x")]);
+  const r = await runSpec("nim", { prompt: "p", env: chainEnv, fetchImpl: f, sleep: sleeper() }, { nim: { model: "flag/m" } });
+  assert.deepEqual(calledModels(f), ["flag/m", C1]);
+  assert.equal(r.engine, `nim:${C1}`);
+
+  const env = { ...chainEnv, NIM_MODEL: "env/m" };
+  const g = fakeFetch([status(404), ok200("x")]);
+  await runSpec("nim", { prompt: "p", env, fetchImpl: g, sleep: sleeper() });
+  assert.deepEqual(calledModels(g), ["env/m", C1]);
+  // explicit nim:env/m equals the resolved default -> still chains
+  const h = fakeFetch([status(404), ok200("x")]);
+  await ENGINES.nim({ prompt: "p", model: "env/m", explicit: true, env, fetchImpl: h, sleep: sleeper() });
+  assert.equal(h.calls.length, 2);
+});
+
+test("nim chain budget: 200 s per attempt, the whole chain within the NIM timeout", async () => {
+  assert.equal(NIM_ATTEMPT_TIMEOUT_SEC, 200);
+  const realNow = Date.now;
+  let t = realNow();
+  Date.now = () => t; // every failed request "takes" 200 s
+  try {
+    const f = async (url, init) => { f.calls.push(JSON.parse(init.body).model); t += 200_000; return new Response("x", { status: 500 }); };
+    f.calls = [];
+    // 450 s: 200 + 200 used, 50 s left -> the third attempt still starts.
+    await ENGINES.nim({ prompt: "p", timeoutSec: 450, env: chainEnv, fetchImpl: f, sleep: sleeper() });
+    assert.equal(f.calls.length, 3);
+    // 410 s: only 10 s left (< 15 s minimum) -> the third is skipped and said so.
+    f.calls = [];
+    t = realNow();
+    const r = await ENGINES.nim({ prompt: "p", timeoutSec: 410, env: chainEnv, fetchImpl: f, sleep: sleeper() });
+    assert.equal(f.calls.length, 2);
+    assert.equal(r.ok, false);
+    assert.ok(r.reason.includes(`${C3}: skipped`));
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+test("nim chain budget: a short NIM timeout runs the first attempt only", async () => {
+  const f = fakeFetch([status(500), ok200("never")]);
+  const r = await ENGINES.nim({ prompt: "p", timeoutSec: 10, env: chainEnv, fetchImpl: f, sleep: sleeper() });
+  assert.equal(r.ok, false);
+  assert.equal(f.calls.length, 1);
+  assert.ok(r.reason.includes("skipped"));
+});
+
+test("nim chain: missing key fails before any request", async () => {
+  const f = fakeFetch([ok200("x")]);
+  const r = await ENGINES.nim({ prompt: "p", env: {}, home: "/nowhere", readFile: () => { throw new Error("ENOENT"); }, fetchImpl: f });
+  assert.equal(r.ok, false);
+  assert.equal(f.calls.length, 0);
 });
