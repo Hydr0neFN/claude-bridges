@@ -85,6 +85,15 @@ Set up the key once: put it in `~/.deepseek-api-key` (restrict it: `chmod 600` o
 `icacls <file> /inheritance:r /grant:r "%USERNAME%:(R,W)"`) or export `DEEPSEEK_API_KEY`. The environment variable wins;
 the file may hold anything around the key, the first `sk-...` token is used. No key means `[failed] no key`; the other engines still answer.
 
+**OpenRouter credit first (2026-10-28).** When an OpenRouter key exists (`OPENROUTER_API_KEY` or `~/.openrouter-key`), `dsapi`
+first calls `deepseek/deepseek-v4.1-flash` on OpenRouter (model pinned in code, request carries `provider.data_collection: "deny"`)
+and only then the official API. A 401/402/403 from OpenRouter (bad key, credit spent) is sticky for the rest of the process;
+a 429/5xx/network failure falls back for that one request. `DS_UPSTREAM=deepseek` forces the official API. Same rule as the
+key proxy of the DS worker (`~/.claude/bin/ds-keyproxy.py`). A result served by OpenRouter carries `upstream: "openrouter"`.
+The shared `:free` pool (1000 requests/day per account, panel and agent flows together) has a reserve: with `OR_FREE_RESERVE=<n>`
+the `openrouter` engine skips `:free` models once `GET /api/v1/key` reports `<= n` requests left (checked at most once a minute;
+the panel's own default is 0, i.e. no lookup, 429 steps the chain on; agent flows use 50, hosted test runs 200).
+
 Requests go to `https://api.deepseek.com/chat/completions` (OpenAI-compatible; `max_tokens` 1500, 90 s timeout, thinking mode off).
 One retry on HTTP 429 (honouring `Retry-After`, capped), 5xx, a timeout or a network error; none on 400/401/402/403.
 A leading `<think>...</think>` block is stripped. The default model is `deepseek-flash`, the id DeepSeek keeps pointed at its

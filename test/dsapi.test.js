@@ -6,7 +6,8 @@ import path from "node:path";
 import { parseOrder, parseOrderDetailed, parseArgs } from "../lib/args.js";
 import {
   ENGINES, DEFAULT_DSAPI_MODEL, DSAPI_SOFT_ALARM_REQUESTS, isDsapiModel, resolveDsapiKey, readDsapiUsage,
-  dsapiUsageNotice, redact, runSpec,
+  dsapiUsageNotice, redact, runSpec, DSAPI_OR_MODEL, resetDsOpenRouterState, openRouterFreeRemaining, orFreeReserve,
+  resetOrFreeCache,
 } from "../lib/engines.js";
 
 // Built at runtime so no key-shaped literal lands in the repo.
@@ -350,4 +351,119 @@ test("default order does not include dsapi", () => {
 test("parseArgs: --dsapi-model", () => {
   assert.equal(parseArgs(["--dsapi-model", "deepseek-flash", "hi"]).dsapiModel, "deepseek-flash");
   assert.equal(parseArgs(["hi"]).dsapiModel, null);
+});
+
+// --- OpenRouter credit first (2026-10-28) ---
+const OR_KEY = "sk-or-" + "cd34".repeat(8);
+const orEnv = { DEEPSEEK_API_KEY: FAKE_KEY, OPENROUTER_API_KEY: OR_KEY };
+const runOr = (fetchImpl, extraEnv = {}) =>
+  ENGINES.dsapi({ prompt: "hi", env: { ...orEnv, ...extraEnv }, home: mkHome(), sleep: naps(), fetchImpl });
+const byHost = (or, ds) => (url) => (url.startsWith("https://openrouter.ai/") ? or : ds);
+
+test("dsapi: with an OpenRouter key the credit goes first, model pinned, data_collection deny", async () => {
+  resetDsOpenRouterState();
+  const f = fakeFetch(byHost(ok({ content: "via or" }), ok({ content: "via ds" })));
+  const r = await runOr(f);
+  assert.deepEqual(r, { engine: "dsapi", ok: true, body: "via or", upstream: "openrouter" });
+  assert.equal(f.calls.length, 1);
+  const { url, init, body } = f.calls[0];
+  assert.equal(url, "https://openrouter.ai/api/v1/chat/completions");
+  assert.equal(init.headers.Authorization, `Bearer ${OR_KEY}`);
+  assert.equal(body.model, DSAPI_OR_MODEL);
+  assert.equal(body.model, "deepseek/deepseek-v4.1-flash");
+  assert.deepEqual(body.provider, { data_collection: "deny" });
+});
+
+test("dsapi: a model argument cannot move the OpenRouter call off the pinned flash id", async () => {
+  resetDsOpenRouterState();
+  const f = fakeFetch(byHost(ok({ content: "x" }), ok({ content: "y" })));
+  await runOr(f, {}).then(() => {});
+  const g = fakeFetch(byHost(ok({ content: "x" }), ok({ content: "y" })));
+  await ENGINES.dsapi({ prompt: "hi", model: "deepseek-v9-flash", env: orEnv, home: mkHome(), sleep: naps(), fetchImpl: g });
+  assert.equal(g.calls[0].body.model, DSAPI_OR_MODEL);
+  const h = fakeFetch(byHost(ok({ content: "x" }), ok({ content: "y" })));
+  const bad = await ENGINES.dsapi({ prompt: "hi", model: "deepseek-v4-pro", env: orEnv, home: mkHome(), sleep: naps(), fetchImpl: h });
+  assert.equal(bad.ok, false);
+  assert.equal(h.calls.length, 0);
+});
+
+test("dsapi: 402 from OpenRouter falls back to the official API and stays there for the process", async () => {
+  resetDsOpenRouterState();
+  const f = fakeFetch(byHost(status(402, "no credit"), ok({ content: "via ds" })));
+  const r = await runOr(f);
+  assert.deepEqual(r, { engine: "dsapi", ok: true, body: "via ds" });
+  assert.deepEqual(f.calls.map((c) => c.url), ["https://openrouter.ai/api/v1/chat/completions", "https://api.deepseek.com/chat/completions"]);
+  const g = fakeFetch(byHost(ok({ content: "via or" }), ok({ content: "via ds" })));
+  const r2 = await runOr(g);
+  assert.equal(r2.body, "via ds");
+  assert.deepEqual(g.calls.map((c) => c.url), ["https://api.deepseek.com/chat/completions"]);
+  resetDsOpenRouterState();
+});
+
+test("dsapi: a 5xx or 429 from OpenRouter falls back for that request only", async () => {
+  resetDsOpenRouterState();
+  const f = fakeFetch(byHost(status(503, "down"), ok({ content: "via ds" })));
+  assert.equal((await runOr(f)).body, "via ds");
+  const g = fakeFetch(byHost(ok({ content: "via or" }), ok({ content: "via ds" })));
+  assert.equal((await runOr(g)).body, "via or");
+});
+
+test("dsapi: DS_UPSTREAM=deepseek forces the official API; no OpenRouter key means no OpenRouter call", async () => {
+  resetDsOpenRouterState();
+  const f = fakeFetch(byHost(ok({ content: "via or" }), ok({ content: "via ds" })));
+  assert.equal((await runOr(f, { DS_UPSTREAM: "deepseek" })).body, "via ds");
+  assert.deepEqual(f.calls.map((c) => c.url), ["https://api.deepseek.com/chat/completions"]);
+  const g = fakeFetch(byHost(ok({ content: "via or" }), ok({ content: "via ds" })));
+  assert.equal((await run(g)).body, "via ds");
+});
+
+test("dsapi: OpenRouter only (no DeepSeek key) works; its failure is reported, the key never leaks", async () => {
+  resetDsOpenRouterState();
+  const f = fakeFetch(byHost(ok({ content: "via or" }), status(500)));
+  const r = await ENGINES.dsapi({ prompt: "hi", env: { OPENROUTER_API_KEY: OR_KEY }, home: mkHome(), sleep: naps(), fetchImpl: f });
+  assert.equal(r.body, "via or");
+  const g = fakeFetch(byHost(status(402, `credit ${OR_KEY}`), status(500)));
+  const r2 = await ENGINES.dsapi({ prompt: "hi", env: { OPENROUTER_API_KEY: OR_KEY }, home: mkHome(), sleep: naps(), fetchImpl: g });
+  assert.equal(r2.ok, false);
+  assert.match(r2.reason, /HTTP 402/);
+  assert.ok(!r2.reason.includes(OR_KEY));
+  resetDsOpenRouterState();
+});
+
+test("orFreeReserve: env wins (non-negative integer), else the caller default", () => {
+  assert.equal(orFreeReserve({}), 50);
+  assert.equal(orFreeReserve({}, 200), 200);
+  assert.equal(orFreeReserve({ OR_FREE_RESERVE: "7" }, 200), 7);
+  assert.equal(orFreeReserve({ OR_FREE_RESERVE: "x" }, 200), 200);
+});
+
+test("openRouterFreeRemaining: reads /v1/key, caches for 60 s, null on errors", async () => {
+  resetOrFreeCache();
+  let n = 0;
+  const f = async () => (n++, new Response(JSON.stringify({ data: { free_model_daily_requests: { remaining: 913 } } }), { status: 200 }));
+  assert.equal(await openRouterFreeRemaining({ key: OR_KEY, fetchImpl: f, now: 1000 }), 913);
+  assert.equal(await openRouterFreeRemaining({ key: OR_KEY, fetchImpl: f, now: 30000 }), 913);
+  assert.equal(n, 1);
+  assert.equal(await openRouterFreeRemaining({ key: OR_KEY, fetchImpl: f, now: 90000 }), 913);
+  assert.equal(n, 2);
+  resetOrFreeCache();
+  assert.equal(await openRouterFreeRemaining({ key: OR_KEY, fetchImpl: async () => new Response("x", { status: 500 }) }), null);
+  assert.equal(await openRouterFreeRemaining({ key: "", fetchImpl: f }), null);
+  resetOrFreeCache();
+});
+
+test("openrouter chain: OR_FREE_RESERVE skips :free models when the pool is at or under the reserve", async () => {
+  resetOrFreeCache();
+  const urls = [];
+  const f = async (url) => {
+    urls.push(url);
+    return url.endsWith("/v1/key")
+      ? new Response(JSON.stringify({ data: { free_model_daily_requests: { remaining: 40 } } }), { status: 200 })
+      : new Response(JSON.stringify(reply({ content: "never" })), { status: 200 });
+  };
+  const r = await ENGINES.openrouter({ prompt: "hi", env: { OPENROUTER_API_KEY: OR_KEY, OR_FREE_RESERVE: "50" }, home: mkHome(), sleep: naps(), fetchImpl: f });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /reserve 50/);
+  assert.ok(urls.every((u) => u.endsWith("/v1/key")));
+  resetOrFreeCache();
 });

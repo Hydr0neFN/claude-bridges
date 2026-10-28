@@ -79,6 +79,14 @@ flowchart TD
 `icacls <file> /inheritance:r /grant:r "%USERNAME%:(R,W)"`）或匯出 `DEEPSEEK_API_KEY`。環境變數優先；
 檔案內容可含其他文字，取第一個 `sk-...` 字串。沒有金鑰時回報 `[failed] no key`，其他引擎仍會照常回答。
 
+**OpenRouter 額度優先（2026-10-28）。** 有 OpenRouter 金鑰時（`OPENROUTER_API_KEY` 或 `~/.openrouter-key`），`dsapi`
+先呼叫 OpenRouter 上的 `deepseek/deepseek-v4.1-flash`（模型在程式中固定，請求帶 `provider.data_collection: "deny"`），
+之後才用官方 API。OpenRouter 回 401/402/403（金鑰錯誤、額度用完）時，本程序其餘時間都改走官方 API；429/5xx/網路錯誤只
+讓該次請求回退。`DS_UPSTREAM=deepseek` 強制走官方 API。規則與 DS 工作者的金鑰代理（`~/.claude/bin/ds-keyproxy.py`）相同。
+由 OpenRouter 回答的結果帶 `upstream: "openrouter"`。共用的 `:free` 額度池（每帳號每日 1000 次，面板與 agent 流程共用）有保留量：
+設定 `OR_FREE_RESERVE=<n>` 後，`openrouter` 引擎在 `GET /api/v1/key` 回報剩餘 `<= n` 次時略過 `:free` 模型（每分鐘最多查一次；
+面板預設 0＝不查詢，429 時換下一個；agent 流程 50，託管測試 200）。
+
 請求送往 `https://api.deepseek.com/chat/completions`（OpenAI 相容；`max_tokens` 1500，逾時 90 秒，關閉 thinking 模式）。
 遇到 HTTP 429（遵循 `Retry-After`，有上限）、5xx、逾時或網路錯誤時重試一次；400/401/402/403 不重試。
 開頭的 `<think>...</think>` 區塊會被移除。預設模型為 `deepseek-flash`（DeepSeek 一直讓它指向目前的 Flash 模型，
