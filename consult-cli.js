@@ -10,6 +10,8 @@
 //        --order entries are `engine` or `engine:model`, e.g. nim:moonshotai/kimi-k3,codex (model wins over the flags)
 //        consult --debate <spec.json> --out-dir <dir>   (structured debate, up to 3 rounds; writes <dir>/digest.md, prints its path + a TALLY line)
 //        --json (with a prompt, --mode all|first or --debate): stdout is exactly one {ok,code,message,data} object (docs/cli-json.md)
+//        --ignore-locks: run engines even while quota-locked (and write no new locks); consult --locks | --unlock <engine|all>
+//        (an engine that reports a usage/quota limit is locked until its reset time, state in ~/.claude/state/consult-locks.json)
 //        consult --check-updates | --update | --check-nim-models | --refresh-nim-models
 
 import fs from "node:fs";
@@ -19,6 +21,7 @@ import { parseArgs, parseOrderDetailed, resolvePrompt } from "./lib/args.js";
 import { runEnvelope, envelope, EXIT } from "./lib/cli-json.js";
 import { runPanel, runChain, lastResortNote, formatSection, summaryLine, writeEngineResult, writeDone } from "./lib/panel.js";
 import { checkUpdates, spawnRefresh, settle, applyUpdates, formatFooter } from "./lib/updates.js";
+import { withLocks, activeLocks, unlock, localTime } from "./lib/locks.js";
 import { peekNimModels, refreshNimModels, formatNimNotice, nimNoticeGate, orderUsesNim } from "./lib/nim-models.js";
 
 const TIMEOUT_SEC = Number(process.env.CONSULT_TIMEOUT) || 300;
@@ -36,6 +39,15 @@ if (args.refreshNimModels) {
   else console.log(formatNimNotice(cache) || `[consult] NIM: no new models (${cache?.seen.length ?? 0} known)`);
   // Only a listing failure in THIS run is an error; a stale error in the cache must not fail a no-key run.
   process.exit(skipped === null && cache?.error ? 1 : 0);
+} else if (args.locks || args.unlock) {
+  if (args.unlock) {
+    const done = unlock(args.unlock);
+    console.log(done.length ? `[consult] unlocked: ${done.join(", ")}` : `[consult] no lock for ${args.unlock}`);
+  } else {
+    const rows = Object.entries(activeLocks()).map(([n, e]) => `${n}: locked until ${localTime(e.until)} (${e.reason})`);
+    console.log(rows.length ? rows.join("\n") : "[consult] no active locks");
+  }
+  process.exit(0);
 } else if (args.checkUpdates || args.update) {
   const { items } = await settle(checkUpdates({ force: true }), 60000);
   if (args.update) {
@@ -102,7 +114,8 @@ async function main() {
     dsapi: { model: args.dsapiModel },
   };
   const ran = []; // --json mode first: every engine tried, in order
-  const run = (name) => runSpec(name, { prompt, cwd, timeoutSec: TIMEOUT_SEC }, opts).then((r) => (ran.push(r), r));
+  const runLocked = withLocks(runSpec, { ignore: args.ignoreLocks });
+  const run = (name) => runLocked(name, { prompt, cwd, timeoutSec: TIMEOUT_SEC }, opts).then((r) => (ran.push(r), r));
 
   // Resolves true once the stream has flushed `text` (a write to a closed pipe reports false).
   const write = (stream, text) => new Promise((resolve) => stream.write(text, (err) => resolve(!err)));
@@ -134,7 +147,7 @@ async function main() {
       spec,
       outDir: args.outDir,
       ctx: loadContext(spec),
-      run: (name, p) => runSpec(name, { prompt: p, cwd, timeoutSec: TIMEOUT_SEC }, opts),
+      run: (name, p) => runLocked(name, { prompt: p, cwd, timeoutSec: TIMEOUT_SEC }, opts),
     });
     if (args.json) console.log(JSON.stringify(envelope(true, "OK", "debate finished", { digest_path: digestPath, tally, out_dir: args.outDir })));
     else console.log(`${digestPath}
