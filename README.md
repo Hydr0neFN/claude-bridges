@@ -411,3 +411,7 @@ Each model has a job that matches how it was trained:
 Beyond model selection, each delegation gets a **role prompt** — "As a Security auditor…", "As a Frontend engineer…", "As a Karpathy-style code reviewer…" — so the model responds from a specific expertise frame, not as a generic assistant. I maintain a full role table (20+ roles across engineering, product, content, and research) that maps each role to the right model tier and tool.
 
 The bridges are the plumbing that makes cross-checking programmatic — not manual copy-paste between chat windows.
+
+## `consult-cli.js --json`
+
+With `--json` (prompt, `--mode all|first` or `--debate`) stdout is exactly one `{ok,code,message,data}` object instead of the text sections, with a fixed exit-code map; see `docs/cli-json.md`. `data.engines[]` has per-engine `ok`, `code` (`OK`, `QUOTA_EXHAUSTED`, `AUTH_FAILED`, `TIMEOUT`, `NOT_INSTALLED`, `EMPTY_OUTPUT`, `CRASHED`, `ENGINE_ERROR`), `reason`, and `file` (with `--out-dir`) or `body`; `data.quota_exhausted` lists the engines that ran out of quota. Without `--json` nothing changes.

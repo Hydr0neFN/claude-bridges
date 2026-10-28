@@ -9,12 +9,14 @@
 //        [--copilot-model M] [--copilot-effort E] [--codex-model M] [--codex-effort E] [--nim-model M] [--openrouter-model M] [--dsapi-model M]
 //        --order entries are `engine` or `engine:model`, e.g. nim:moonshotai/kimi-k3,codex (model wins over the flags)
 //        consult --debate <spec.json> --out-dir <dir>   (structured debate, up to 3 rounds; writes <dir>/digest.md, prints its path + a TALLY line)
+//        --json (with a prompt, --mode all|first or --debate): stdout is exactly one {ok,code,message,data} object (docs/cli-json.md)
 //        consult --check-updates | --update | --check-nim-models | --refresh-nim-models
 
 import fs from "node:fs";
 import { runSpec, dsapiUsageNotice, qwenAvailable } from "./lib/engines.js";
 import { validateSpec, loadContext, runDebate } from "./lib/debate.js";
 import { parseArgs, parseOrderDetailed, resolvePrompt } from "./lib/args.js";
+import { runEnvelope, envelope, EXIT } from "./lib/cli-json.js";
 import { runPanel, runChain, lastResortNote, formatSection, summaryLine, writeEngineResult, writeDone } from "./lib/panel.js";
 import { checkUpdates, spawnRefresh, settle, applyUpdates, formatFooter } from "./lib/updates.js";
 import { peekNimModels, refreshNimModels, formatNimNotice, nimNoticeGate, orderUsesNim } from "./lib/nim-models.js";
@@ -47,15 +49,23 @@ if (args.refreshNimModels) {
   await main();
 }
 
+// --json: the envelope is the whole stdout; the human message still goes to stderr.
+function jsonFail(code, message) {
+  if (args.json) console.log(JSON.stringify(envelope(false, code, message, {})));
+}
+
 async function main() {
   let prompt;
   try {
     prompt = args.debate ? "" : resolvePrompt(args);
   } catch (e) {
     console.error(`consult: ${e.message}`);
-    process.exit(2);
+    const missing = args.json && args.promptFile && args.promptFile !== "-" && !fs.existsSync(args.promptFile);
+    jsonFail(missing ? "NOT_FOUND" : "USAGE", e.message);
+    process.exit(missing ? EXIT.notFound : 2);
   }
   if (!prompt && !args.debate) {
+    jsonFail("USAGE", "no prompt given");
     console.error('usage: consult "<prompt>" | --prompt-file <path|-> [--mode all|first] [--order copilot,codex] [--cwd <dir>] [--out-dir <dir>] [--nim-model M] [--openrouter-model M] [--dsapi-model M] | --debate <spec.json> --out-dir <dir> | --check-updates | --update | --check-nim-models');
     process.exit(2);
   }
@@ -71,6 +81,7 @@ async function main() {
   if (dropped.length) console.error(`consult: ignoring invalid order entries: ${dropped.join(", ")}`);
   if (!order.length) {
     console.error("consult: no valid engine in the order (use engine or engine:model; a model only on copilot, codex, nim, deepseek, openrouter, dsapi; qwen takes none)");
+    jsonFail("USAGE", "no valid engine in the order");
     process.exit(2);
   }
 
@@ -90,7 +101,8 @@ async function main() {
     openrouter: { model: args.openrouterModel },
     dsapi: { model: args.dsapiModel },
   };
-  const run = (name) => runSpec(name, { prompt, cwd, timeoutSec: TIMEOUT_SEC }, opts);
+  const ran = []; // --json mode first: every engine tried, in order
+  const run = (name) => runSpec(name, { prompt, cwd, timeoutSec: TIMEOUT_SEC }, opts).then((r) => (ran.push(r), r));
 
   // Resolves true once the stream has flushed `text` (a write to a closed pipe reports false).
   const write = (stream, text) => new Promise((resolve) => stream.write(text, (err) => resolve(!err)));
@@ -114,7 +126,9 @@ async function main() {
       spec = validateSpec(JSON.parse(fs.readFileSync(args.debate, "utf8")));
     } catch (e) {
       console.error(`consult: ${e.message}`);
-      return finish(2);
+      const missing = args.json && e?.code === "ENOENT";
+      jsonFail(missing ? "NOT_FOUND" : "USAGE", e.message);
+      return finish(missing ? EXIT.notFound : 2);
     }
     const { digestPath, tally } = await runDebate({
       spec,
@@ -122,13 +136,20 @@ async function main() {
       ctx: loadContext(spec),
       run: (name, p) => runSpec(name, { prompt: p, cwd, timeoutSec: TIMEOUT_SEC }, opts),
     });
-    console.log(`${digestPath}
+    if (args.json) console.log(JSON.stringify(envelope(true, "OK", "debate finished", { digest_path: digestPath, tally, out_dir: args.outDir })));
+    else console.log(`${digestPath}
 ${tally}`);
     return finish(0);
   }
 
   if (mode === "first") {
     const { result: r, trail } = await runChain(order, run);
+    if (args.json) {
+      const env = runEnvelope({ mode: "first", results: ran, trail });
+      if (!env.ok) console.error(`consult: all engines failed.\n${trail.map((t) => `- ${t}`).join("\n")}`);
+      console.log(JSON.stringify(env));
+      return finish(env.ok ? 0 : 1);
+    }
     if (r) {
       console.log(r.body);
       const note = lastResortNote(r);
@@ -145,11 +166,18 @@ ${tally}`);
     order,
     run,
     onSettle: (name, r) => {
-      console.log(formatSection(r));
+      if (!args.json) console.log(formatSection(r));
       if (args.outDir) writeEngineResult(args.outDir, name, r);
     },
   });
   const summary = summaryLine(results);
+  if (args.json) {
+    const env = runEnvelope({ mode: "all", results, outDir: args.outDir || undefined });
+    if (args.outDir) writeDone(args.outDir, summary || `consult: all engines failed.\n${results.map((r) => `- ${r.engine}: ${r.reason}`).join("\n")}`);
+    if (!summary) console.error(`consult: all engines failed.\n${results.map((r) => `- ${r.engine}: ${r.reason}`).join("\n")}`);
+    console.log(JSON.stringify(env));
+    return finish(summary ? 0 : 1);
+  }
   if (!summary) {
     const failed = results.map((r) => `${r.engine}: ${r.reason}`);
     const msg = `consult: all engines failed.\n${failed.map((t) => `- ${t}`).join("\n")}`;
