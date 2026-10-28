@@ -12,15 +12,18 @@
 //        --json (with a prompt, --mode all|first or --debate): stdout is exactly one {ok,code,message,data} object (docs/cli-json.md)
 //        --ignore-locks: run engines even while quota-locked (and write no new locks); consult --locks | --unlock <engine|all>
 //        (an engine that reports a usage/quota limit is locked until its reset time, state in ~/.claude/state/consult-locks.json)
+//        consult --round2 <round-1 out-dir>   (round 2: answering engines see each other's round-1 answers, critique, may revise; writes <dir>/round2/, prints a dissent block)
 //        consult --check-updates | --update | --check-nim-models | --refresh-nim-models
 
 import fs from "node:fs";
+import path from "node:path";
 import { runSpec, dsapiUsageNotice, qwenAvailable } from "./lib/engines.js";
 import { validateSpec, loadContext, runDebate } from "./lib/debate.js";
 import { parseArgs, parseOrderDetailed, resolvePrompt } from "./lib/args.js";
 import { runEnvelope, envelope, EXIT } from "./lib/cli-json.js";
 import { runPanel, runChain, lastResortNote, formatSection, summaryLine, writeEngineResult, writeDone } from "./lib/panel.js";
 import { checkUpdates, spawnRefresh, settle, applyUpdates, formatFooter } from "./lib/updates.js";
+import { readRound1, buildRound2Prompt, dissentBlock } from "./lib/round2.js";
 import { withLocks, activeLocks, unlock, localTime } from "./lib/locks.js";
 import { peekNimModels, refreshNimModels, formatNimNotice, nimNoticeGate, orderUsesNim } from "./lib/nim-models.js";
 
@@ -69,14 +72,14 @@ function jsonFail(code, message) {
 async function main() {
   let prompt;
   try {
-    prompt = args.debate ? "" : resolvePrompt(args);
+    prompt = args.debate || args.round2 ? "" : resolvePrompt(args);
   } catch (e) {
     console.error(`consult: ${e.message}`);
     const missing = args.json && args.promptFile && args.promptFile !== "-" && !fs.existsSync(args.promptFile);
     jsonFail(missing ? "NOT_FOUND" : "USAGE", e.message);
     process.exit(missing ? EXIT.notFound : 2);
   }
-  if (!prompt && !args.debate) {
+  if (!prompt && !args.debate && !args.round2) {
     jsonFail("USAGE", "no prompt given");
     console.error('usage: consult "<prompt>" | --prompt-file <path|-> [--mode all|first] [--order copilot,codex] [--cwd <dir>] [--out-dir <dir>] [--nim-model M] [--openrouter-model M] [--dsapi-model M] | --debate <spec.json> --out-dir <dir> | --check-updates | --update | --check-nim-models');
     process.exit(2);
@@ -113,6 +116,10 @@ async function main() {
     openrouter: { model: args.openrouterModel },
     dsapi: { model: args.dsapiModel },
   };
+  if (args.outDir && !args.debate && !args.round2) {
+    fs.mkdirSync(args.outDir, { recursive: true });
+    fs.writeFileSync(path.join(args.outDir, "_prompt.md"), `${prompt}\n`); // lets --round2 <out-dir> re-ask without the prompt
+  }
   const ran = []; // --json mode first: every engine tried, in order
   const runLocked = withLocks(runSpec, { ignore: args.ignoreLocks });
   const run = (name) => runLocked(name, { prompt, cwd, timeoutSec: TIMEOUT_SEC }, opts).then((r) => (ran.push(r), r));
@@ -130,6 +137,33 @@ async function main() {
     if (written && nimGate?.text) nimGate.commit(); // only count a notice that was really delivered
     process.exit(code);
   };
+
+  if (args.round2) {
+    let r1;
+    try {
+      r1 = readRound1(args.round2);
+      if (r1.answers.length < 2) throw new Error(`round 2 needs at least 2 round-1 answers in ${args.round2} (found ${r1.answers.length})`);
+      if (!r1.prompt) throw new Error(`no ${path.join(args.round2, "_prompt.md")}: re-run round 1 with --out-dir, or write the question there`);
+    } catch (e) {
+      console.error(`consult: ${e.message}`);
+      jsonFail(e?.code === "ENOENT" ? "NOT_FOUND" : "USAGE", e.message);
+      return finish(e?.code === "ENOENT" ? EXIT.notFound : 2);
+    }
+    const dir2 = path.join(args.round2, "round2");
+    const results2 = await runPanel({
+      order: r1.answers.map((a) => a.label),
+      run: (name) => runLocked(name, { prompt: buildRound2Prompt(r1.prompt, r1.answers, r1.answers.findIndex((a) => a.label === name)), cwd, timeoutSec: TIMEOUT_SEC }, opts),
+      onSettle: (name, r) => {
+        if (!args.json) console.log(formatSection(r));
+        writeEngineResult(dir2, name, r);
+      },
+    });
+    const block = dissentBlock(results2);
+    writeDone(dir2, block);
+    if (args.json) console.log(JSON.stringify(envelope(results2.some((r) => r.ok), results2.some((r) => r.ok) ? "OK" : "ALL_ENGINES_FAILED", "round 2 finished", { out_dir: dir2, dissent: block })));
+    else console.log(`---\n${block}`);
+    return finish(results2.some((r) => r.ok) ? 0 : 1);
+  }
 
   if (args.debate) {
     // Debate: spec problems are usage errors (exit 2); engine failures are contained inside runDebate.

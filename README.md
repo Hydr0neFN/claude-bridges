@@ -285,6 +285,7 @@ node consult-cli.js --check-nim-models         # force the NIM new-model check n
 node consult-cli.js --prompt-file review.txt   # prompt from a file ("-" = stdin); not combinable with prompt words. Use it for long prompts such as a diff, which can exceed the OS command-line limit
 node consult-cli.js --out-dir /tmp/c "prompt"   # also write <dir>/<engine>.md as each engine settles, <dir>/_done at the end (unsafe filename characters such as : and / become _)
 node consult-cli.js --debate spec.json --out-dir /tmp/d   # structured debate (see "Debate mode" below); prints <dir>/digest.md and a TALLY line
+node consult-cli.js --round2 /tmp/c     # round 2 of a finished --out-dir run: answering engines see each other's answers (anonymous), critique, may revise; writes /tmp/c/round2/, prints a dissent block
 node consult-cli.js --locks           # list active quota locks
 node consult-cli.js --unlock codex    # drop a quota lock (engine name or "all")
 node consult-cli.js --ignore-locks "prompt"   # run locked engines anyway, write no new locks
@@ -293,6 +294,10 @@ node consult-cli.js --update          # brew upgrade --cask <outdated CLIs>; git
 ```
 
 In `--mode all`, `consult-cli` prints each engine's whole `## <engine>` section (answer or `[failed] reason`) the moment it settles, in completion order, then the `[consult] mode: all | ...` summary last. Per-engine timeouts are independent, so a slow engine never delays the others. `consult-bridge` returns one aggregated result but uses the same runner (`lib/panel.js`).
+
+### Round 2 on disagreement
+
+A `--mode all --out-dir D` run also saves the question as `D/_prompt.md`. When the round-1 answers conflict on a decision, `consult-cli --round2 D` asks every engine that answered (needs >= 2) a second time: it sees the question, its own answer and the other answers as `Panelist N`, critiques them, and ends with `REVISED:`, `POSITION:`, `DISSENT:` lines. Output goes to `D/round2/<engine>.md` (+ `_done`) and a dissent block is printed; the caller reports that dissent, not only its own verdict. Locked engines are skipped as in round 1. `--debate` already has its own R2/R3 for stance-based questions. Implementation: `lib/round2.js`, tests `test/round2.test.js`.
 
 ### Quota locks
 
