@@ -4,7 +4,7 @@
 // context floor and can be left dangling by tool-search deferral; as a CLI it
 // costs nothing until called. Shares lib/engines.js with the MCP version.
 //
-// Engines: copilot, codex, deepseek, agy, nim, openrouter, dsapi, qwen (local lab model on hgn-fw13; skipped in the DOWTrade window)
+// Engines: copilot, codex, deepseek, agy, nim, openrouter, dsapi
 // Usage: consult "<prompt>" | --prompt-file <path|-> [--mode all|first] [--order copilot,codex] [--cwd <dir>] [--out-dir <dir>]
 //        [--copilot-model M] [--copilot-effort E] [--codex-model M] [--codex-effort E] [--nim-model M] [--openrouter-model M] [--dsapi-model M]
 //        --order entries are `engine` or `engine:model`, e.g. nim:moonshotai/kimi-k3,codex (model wins over the flags)
@@ -17,9 +17,9 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { runSpec, dsapiUsageNotice, qwenAvailable } from "./lib/engines.js";
+import { runSpec, dsapiUsageNotice } from "./lib/engines.js";
 import { validateSpec, loadContext, runDebate } from "./lib/debate.js";
-import { parseArgs, parseOrderDetailed, resolvePrompt } from "./lib/args.js";
+import { parseArgs, parseOrderDetailed, resolvePrompt, retiredInOrder } from "./lib/args.js";
 import { runEnvelope, envelope, EXIT } from "./lib/cli-json.js";
 import { runPanel, runChain, lastResortNote, formatSection, summaryLine, writeEngineResult, writeDone } from "./lib/panel.js";
 import { checkUpdates, spawnRefresh, settle, applyUpdates, formatFooter } from "./lib/updates.js";
@@ -85,9 +85,16 @@ async function main() {
     process.exit(2);
   }
 
-  // Default panel gains the local, private qwen engine only while it can run (outside the DOWTrade window, key present).
   // agy is in the default set only while it drains its remaining quota (owner 2026-10-27); drop it here and in lib/args.js once it reports quota exhausted.
-  const rawOrder = args.order || process.env.CONSULT_ORDER || (qwenAvailable() ? "copilot,codex,deepseek,agy,nim,openrouter,qwen" : undefined);
+  const rawOrder = args.order || process.env.CONSULT_ORDER || "copilot,codex,deepseek,agy,nim,openrouter";
+  // A retired engine is a hard usage error, not a silent drop (parseOrderDetailed still drops unknown entries).
+  const retiredEntry = retiredInOrder(rawOrder);
+  if (retiredEntry) {
+    const msg = `consult: engine ${retiredEntry} was removed (unknown engine); use copilot,codex,deepseek,agy,nim,openrouter`;
+    jsonFail("USAGE", msg);
+    console.error(msg);
+    process.exit(2);
+  }
   const { order, dropped } = parseOrderDetailed(rawOrder, undefined, {
     nimModel: args.nimModel || process.env.NIM_MODEL,
     openrouterModel: args.openrouterModel || process.env.OPENROUTER_MODEL,
@@ -95,7 +102,7 @@ async function main() {
   });
   if (dropped.length) console.error(`consult: ignoring invalid order entries: ${dropped.join(", ")}`);
   if (!order.length) {
-    console.error("consult: no valid engine in the order (use engine or engine:model; a model only on copilot, codex, nim, deepseek, openrouter, dsapi; qwen takes none)");
+    console.error("consult: no valid engine in the order (use engine or engine:model; a model only on copilot, codex, nim, deepseek, openrouter, dsapi)");
     jsonFail("USAGE", "no valid engine in the order");
     process.exit(2);
   }

@@ -48,7 +48,7 @@ flowchart TD
 
 `deepseek` 已列入預設的 `CONSULT_ORDER`（排在最後，因此在 `first` 模式下僅作為備援）。它需要 `deeperseeker` proxy
 在 `127.0.0.1:4000` 運作；若 proxy 未啟動或沒有金鑰，會自動備援到官方 API（`dsapi`，僅限 flash，標示 `deepseek->dsapi`，見下），若也沒有金鑰則軟性失敗，其他引擎仍會照常回答。
-`nim` 也已列入預設順序（在 `deepseek` 之後，預設為 `copilot,codex,deepseek,agy,nim,openrouter`，`qwen` 可用時再加在最後），並帶有 5 個模型的備援鏈（`nvidia/nemotron-3-ultra-550b-a55b` -> `minimaxai/minimax-m3.1-flash` -> `nvidia/nemotron-3.5-super-vl-120b-a12b` -> `z-ai/glm-5.3-flash` -> `openai/gpt-oss-20b`，可用 `NIM_CHAIN` 覆寫；每步最多 120 秒，整條鏈受 `NIM_TIMEOUT` 限制，上限 600 秒）；明確寫 `nim:<其他模型>` 時只跑該模型、不走備援鏈。`openrouter` 自 2026-10-27 起同樣列入預設順序（在 `qwen` 之前），預設模型 `poolside/laguna-s-2.1:free` 與 `nim` 不同家族（兩條備援鏈的模型家族完全不重疊，由測試保證），兩者算作獨立的聲音；要排除它請明確指定 `--order`（例如 `--order copilot,codex,deepseek`）。`dsapi` 也是選用制（`--order copilot,codex,deepseek,dsapi`），且 `deepseek` 會自動備援到它（見下）。
+`nim` 也已列入預設順序（在 `deepseek` 之後，預設為 `copilot,codex,deepseek,agy,nim,openrouter`），並帶有 5 個模型的備援鏈（`nvidia/nemotron-3-ultra-550b-a55b` -> `minimaxai/minimax-m3.1-flash` -> `nvidia/nemotron-3.5-super-vl-120b-a12b` -> `z-ai/glm-5.3-flash` -> `openai/gpt-oss-20b`，可用 `NIM_CHAIN` 覆寫；每步最多 120 秒，整條鏈受 `NIM_TIMEOUT` 限制，上限 600 秒）；明確寫 `nim:<其他模型>` 時只跑該模型、不走備援鏈。`openrouter` 自 2026-10-27 起同樣列入預設順序，預設模型 `poolside/laguna-s-2.1:free` 與 `nim` 不同家族（兩條備援鏈的模型家族完全不重疊，由測試保證），兩者算作獨立的聲音；要排除它請明確指定 `--order`（例如 `--order copilot,codex,deepseek`）。`dsapi` 也是選用制（`--order copilot,codex,deepseek,dsapi`），且 `deepseek` 會自動備援到它（見下）。
 與其他 CLI 引擎不同，`deepseek`、`nim`、`openrouter` 與 `dsapi` 沒有 cwd、shell 或檔案存取權限 ——
 只看得到 prompt 文字本身，因此送給它們的 prompt 必須自帶完整脈絡。
 
@@ -268,7 +268,7 @@ node consult-cli.js --update          # brew upgrade --cask <過期的 CLI>；gi
                { "engine": "deepseek", "stance": "argue for B", "fallback": ["openrouter", "nim"] } ] }
 ```
 
-- Prompt 一律自給自足（內嵌 `context` 加上 `context_files`，每檔 20 KB、總計 60 KB，截斷處會標記），因為 deepseek、nim、openrouter、qwen 沒有檔案存取權限。每則回覆必須以 `CLAIMS`（最多 3 點）/ `CONCEDES` / `BOTTOM LINE` 區塊結尾。
+- Prompt 一律自給自足（內嵌 `context` 加上 `context_files`，每檔 20 KB、總計 60 KB，截斷處會標記），因為 deepseek、nim、openrouter 沒有檔案存取權限。每則回覆必須以 `CLAIMS`（最多 3 點）/ `CONCEDES` / `BOTTOM LINE` 區塊結尾。
 - 第 1 輪：所有立場並行執行（`<dir>/r1/<engine>.md`，另有 `.prompt.md`）。第 2 輪（`rounds: 2`）：第 1 輪有回答的引擎各自收到自己的立場，加上其他引擎第 1 輪的結尾區塊（不含全文），並以 `FINAL PICK: <option> - <原因>` 結尾（`<dir>/r2/`）。第 1 輪同樣以開場 `FINAL PICK` 結尾。
 - 防從眾（第 2、3 輪）：對手以 `Debater N` 呈現（不含引擎名稱、票數或多數暗示），prompt 明說「多數同意不是證據」。每則回覆加上 `CHANGED BECAUSE:`（哪位 Debater 的哪項主張改變了立場，或 `unchanged`）與 `WOULD CHANGE MY MIND IF:`。
 - 第 3 輪（`rounds: 3`，字數上限 `cross_cap` 預設 100）僅在第 2 輪 FINAL PICK 仍不一致時執行；每位有 pick 的辯手只會看到「pick 與自己不同」的辯手的主張並只回應這些（`<dir>/r3/`）；否則略過，digest 會說明原因。digest 另列每個引擎的 pick 軌跡，例如 `nim: D -> A -> A (R2 changed: Debater 2 claim 1)`；沒說明理由就改變 pick 會標記 `NO REASON GIVEN`，TALLY 採用各引擎最後一次的 pick。借用的做法：獨立第一輪與匿名化同儕（Du et al. 2023；arXiv 2510.07517）、批判而非求共識的提示（Free-MAD，arXiv 2509.11035）；也有論文指出單純多數決即可達到辯論的多數增益，因此 digest 保留原始 pick 與軌跡，而非由裁判下結論。

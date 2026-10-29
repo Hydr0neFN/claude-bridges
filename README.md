@@ -48,12 +48,9 @@ or the MCP `order` argument, ideally once per review.
 
 `deepseek` is in the default `CONSULT_ORDER` (last, so in mode `first` it is only a fallback). It needs the
 `deeperseeker` proxy on `127.0.0.1:4000`; if the proxy is down or has no key, it falls back to the official API (`dsapi`, flash only, label `deepseek->dsapi`; see below), or fails soft
-if that has no key either, and the other engines still answer. `nim` is in the default order too (after `deepseek`, so the default panel is `copilot,codex,deepseek,agy,nim,openrouter`, plus `qwen` when it can run); it walks a fallback chain, see below.
-`openrouter` is in the default order too (last before `qwen`; since 2026-10-27, so the default panel is `copilot,codex,deepseek,agy,nim,openrouter`). Its default model (`poolside/laguna-s-2.1:free`) is a different family from `nim`'s, so the two count as separate voices. Drop it with an explicit `--order` (e.g. `--order copilot,codex,deepseek`).
+if that has no key either, and the other engines still answer. `nim` is in the default order too (after `deepseek`, so the default panel is `copilot,codex,deepseek,agy,nim,openrouter`); it walks a fallback chain, see below.
+`openrouter` is in the default order too (last; since 2026-10-27, so the default panel is `copilot,codex,deepseek,agy,nim,openrouter`). Its default model (`poolside/laguna-s-2.1:free`) is a different family from `nim`'s, so the two count as separate voices. Drop it with an explicit `--order` (e.g. `--order copilot,codex,deepseek`).
 `dsapi` is opt-in as well (`--order copilot,codex,deepseek,dsapi`), and `deepseek` falls back to it on its own (see below).
-`qwen` is the local lab model on hgn-fw13, reached through its `llm-gate` (`FW13_LLM_URL`, lab key `~/.config/fw13/lab.key`; override with `QWEN_BASE`, `QWEN_KEY_PATH` / `QWEN_API_KEY`, `QWEN_MODEL`, `QWEN_MAX_TOKENS`). It is free and private, takes no `engine:model`, and names the model the gate serves in its section header (`qwen:<model>`). The box belongs to DOWTrade on weekdays 07:30-16:45 America/New_York: inside that window the engine reports `skipped: trading hours`, and a gate 503 is reported as `skipped: gate busy`. The default panel adds `qwen` last, after `nim`, only when it can run (outside the window and a key is present).
-
-Interactive key: when `~/.config/fw13/interactive.key` (or `FW13_LLM_INTERACTIVE_KEY_FILE`) exists and is non-empty, `qwen` uses it instead of the lab key (`QWEN_API_KEY` and an explicit `QWEN_KEY_PATH` still win). The gate then treats the call as interactive work: DOWTrade requests are refused with `busy: interactive` while it runs and a running lab job is preempted. Each call sends a fresh random `X-Gate-Session` token and, when it ends (answer, error or timeout), does a best-effort `GET /gate/lease` with `X-Gate-Lease: release`; the trading-hours skip is unchanged.
 Unlike the CLI engines, `deepseek`, `nim`, `openrouter` and `dsapi` get no cwd, shell or file access — they only ever see the prompt text, so give them self-contained prompts.
 
 ### `openrouter` (OpenRouter free models)
@@ -182,7 +179,7 @@ response detail. Neither is retried.
 When consult runs as the MCP `consult-bridge`, its registration needs `"timeout": 660000` or more for `nim` to use the full
 10 minutes (the registration example below uses that value). In `--mode first` the engines run one after another, so a
 stalled `nim` (all three chain steps) holds up the chain for up to 600 s and `nim` plus a fallback can exceed 660 s: keep `nim` last in the order
-(it is last, before `qwen`, in the default), or use `--mode all` (parallel, the default).
+(it is last in the default), or use `--mode all` (parallel, the default).
 
 #### Bi-weekly new-model check
 
@@ -315,7 +312,7 @@ answers go to files, and the caller reads only `digest.md` (about 1.5k tokens fo
                { "engine": "deepseek", "stance": "argue for B", "fallback": ["openrouter", "nim"] } ] }
 ```
 
-- Prompts are self-contained (inline `context` plus `context_files`, 20 KB per file and 60 KB total, truncation marked), because deepseek, nim, openrouter and qwen have no file access. Every reply must end with a `CLAIMS` (max 3) / `CONCEDES` / `BOTTOM LINE` block.
+- Prompts are self-contained (inline `context` plus `context_files`, 20 KB per file and 60 KB total, truncation marked), because deepseek, nim and openrouter have no file access. Every reply must end with a `CLAIMS` (max 3) / `CONCEDES` / `BOTTOM LINE` block.
 - Round 1: all stances run in parallel (`<dir>/r1/<engine>.md`, plus `.prompt.md`). Round 2 (`rounds: 2`): each engine that answered gets its stance plus the other engines' round-1 tail blocks (not their full text) and ends with `FINAL PICK: <option> - <reason>` (`<dir>/r2/`). Round 1 also ends with an opening `FINAL PICK`.
 - Anti-herding (rounds 2 and 3): opponents appear as `Debater N` (no engine names, no vote tally, no majority hint) and the prompt says agreement is not evidence. Each reply adds `CHANGED BECAUSE:` (which Debater's claim moved it, or `unchanged`) and `WOULD CHANGE MY MIND IF:`.
 - Round 3 (`rounds: 3`, default cap `cross_cap` 100 words) runs only when the R2 final picks still differ; each debater who gave a pick sees only the claims of debaters whose pick differs and answers just those (`<dir>/r3/`). Otherwise it is skipped and the digest says why. The digest also lists a per-engine pick trajectory such as `nim: D -> A -> A (R2 changed: Debater 2 claim 1)`; a pick that moved without a stated reason is flagged `NO REASON GIVEN`, and the TALLY uses each engine's latest pick. Borrowed ideas: independent first round and anonymised peers (Du et al. 2023; arXiv 2510.07517), critique-not-consensus prompting (Free-MAD, arXiv 2509.11035); papers also report plain majority voting matching debate, so the digest keeps the raw picks and trajectories rather than a judge verdict.
@@ -381,7 +378,7 @@ Overrides for the consult panel: `COPILOT_BRIDGE_BIN`, `CODEX_BRIDGE_BIN`, `AGY_
 | `CONSULT_TIMEOUT` | `300` | Per-engine timeout in seconds (not used by `nim`, see `NIM_TIMEOUT`) |
 | `CONSULT_MAX_OUTPUT_CHARS` | `50000` | Total output truncation cap |
 | `CONSULT_PER_ENGINE_CHARS` | `20000` | Per-engine truncation in `all` mode |
-| `CONSULT_ORDER` | `copilot,codex,deepseek,agy,nim,openrouter` | Default engine order (the CLI adds `qwen` last when it can run) |
+| `CONSULT_ORDER` | `copilot,codex,deepseek,agy,nim,openrouter` | Default engine order |
 | `CONSULT_MODE` | `all` | Default mode (`all` or `first`) |
 | `COPILOT_MODEL` | (unset = auto) | Passed as `--model` only when set. If Copilot rejects it (auto-only plans such as Student), retried once on auto and labelled `copilot (auto; <model> unavailable on this plan)` |
 | `COPILOT_EFFORT` | (unset) | `--reasoning-effort none\|minimal\|low\|medium\|high\|xhigh\|max` |
