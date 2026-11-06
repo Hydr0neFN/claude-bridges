@@ -138,6 +138,12 @@ test("redact masks an AIza key to AIza*** and leaves the other patterns working"
   assert.equal(redact("k=nvapi-abcdefghij"), "k=nvapi-***");
 });
 
+test("newer AQ.-format AI Studio keys: resolved from the key file and masked", () => {
+  const aq = "AQ." + "Ab_c-".repeat(8); // built at runtime: no key-shaped literal
+  assert.equal(resolveGeminiKey({ env: {}, home: "/h", readFile: () => `${aq}\r\n` }), aq);
+  assert.equal(redact(`k=${aq}`), "k=AQ.***");
+});
+
 test("gemini chain: explicit gemini:<model> other than the default runs only that model", async () => {
   const f = fakeFetch([status(404), ok({ content: "never" })]);
   const r = await ENGINES.gemini({ prompt: "hi", model: "gemini-custom", explicit: true, env, fetchImpl: f });
