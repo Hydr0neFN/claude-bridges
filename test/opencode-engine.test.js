@@ -13,7 +13,9 @@ import {
 } from "../lib/engines.js";
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const [M1, M2, M3, M4, M5] = OPENCODE_CHAIN;
+// Chain-walk tests use a synthetic five-model chain (OPENCODE_CHAIN env); the real chain is checked below.
+const [M1, M2, M3, M4, M5] = ["m1", "m2", "m3", "m4", "m5"];
+const CHAIN5 = [M1, M2, M3, M4, M5].join(",");
 const textLine = (t) => JSON.stringify({ type: "text", part: { text: t } });
 const finish = JSON.stringify({ type: "step_finish", part: { reason: "stop", cost: 0 } });
 const okOut = (t) => `${JSON.stringify({ type: "step_start" })}\n${textLine(t)}\n${finish}\n`;
@@ -42,7 +44,7 @@ process.stdin.on("end", () => {
   process.exit(s.code ?? 0);
 });
 `);
-  return { env: { OPENCODE_PATH: script }, calls: () => (fs.existsSync(log) ? JSON.parse(fs.readFileSync(log, "utf8")) : []) };
+  return { env: { OPENCODE_PATH: script, OPENCODE_CHAIN: CHAIN5 }, calls: () => (fs.existsSync(log) ? JSON.parse(fs.readFileSync(log, "utf8")) : []) };
 }
 
 test("opencode is registered: model engine, lockable, last of the old default and then azure, gemini", () => {
@@ -53,13 +55,12 @@ test("opencode is registered: model engine, lockable, last of the old default an
   assert.deepEqual(parseOrder(`opencode:${DEFAULT_OPENCODE_MODEL},opencode`), ["opencode"]);
 });
 
-test("chain: five free models, no deepseek or nemotron, env override and model-first ordering", () => {
-  assert.equal(OPENCODE_CHAIN.length, 5);
-  assert.deepEqual(OPENCODE_CHAIN, ["beam-free", "glm-5.3-flash-free", "mimo-v2.6-flash-free", "big-pickle", "flint-40b-free"]);
-  assert.ok(!OPENCODE_CHAIN.some((m) => /deepseek|nemotron/.test(m)));
+test("chain: three free models, none shared with nim, openrouter or deepseek; env override and model-first ordering", () => {
+  assert.deepEqual(OPENCODE_CHAIN, ["beam-free", "mimo-v2.6-flash-free", "big-pickle"]);
+  assert.ok(!OPENCODE_CHAIN.some((m) => /deepseek|nemotron|glm|flint/.test(m)));
   assert.deepEqual(opencodeChain({ OPENCODE_CHAIN: " a , b ,," }), ["a", "b"]);
   assert.deepEqual(opencodeChain({}), OPENCODE_CHAIN);
-  assert.deepEqual(opencodeModels(M3, {}), [M3, M1, M2, M4, M5]);
+  assert.deepEqual(opencodeModels(M3, { OPENCODE_CHAIN: CHAIN5 }), [M3, M1, M2, M4, M5]);
   assert.equal(opencodeTimeoutSec({}), 300);
   assert.equal(opencodeTimeoutSec({ OPENCODE_TIMEOUT: "9999" }), 600);
 });
@@ -115,7 +116,7 @@ test("opencode chain: an auth error stops the chain", async () => {
 
 test("opencode: Free usage limit text is a quota failure that locks the engine", async () => {
   const dflt = { stderr: "Free usage limit reached for this model", code: 1 };
-  const f = fake(Object.fromEntries(OPENCODE_CHAIN.map((m) => [m, dflt])));
+  const f = fake(Object.fromEntries([M1, M2, M3, M4, M5].map((m) => [m, dflt])));
   const r = await ENGINES.opencode({ prompt: "hi", env: f.env });
   assert.equal(r.ok, false);
   assert.match(r.reason, /usage limit/i);

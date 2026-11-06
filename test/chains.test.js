@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { NIM_CHAIN, OPENROUTER_CHAIN, DEFAULT_NIM_MODEL, DEFAULT_OPENROUTER_MODEL } from "../lib/engines.js";
+import { NIM_CHAIN, OPENROUTER_CHAIN, OPENCODE_CHAIN, OPENCODE_FAMILY, DEFAULT_NIM_MODEL, DEFAULT_OPENROUTER_MODEL } from "../lib/engines.js";
 
 /** "nvidia/nemotron-3-ultra-550b-a55b:free" -> { vendor: "nvidia", stem: "nemotron" }. */
 const family = (id) => {
@@ -31,4 +31,17 @@ test("default chains are family-disjoint: no vendor and no name stem appears in 
     const shared = [...nim].filter((f) => or.has(f));
     assert.deepEqual(shared, [], `${key} shared by NIM_CHAIN and OPENROUTER_CHAIN`);
   }
+});
+
+test("opencode chain is family-disjoint from nim and openrouter (vendor and stem), and every model has a canonical id", () => {
+  const oc = OPENCODE_CHAIN.map((m) => OPENCODE_FAMILY[m]);
+  assert.ok(oc.every(Boolean), "OPENCODE_FAMILY lacks a chain model");
+  for (const key of ["vendor", "stem"]) {
+    const ocSet = set(oc, key);
+    for (const [name, chain] of [["NIM_CHAIN", NIM_CHAIN], ["OPENROUTER_CHAIN", OPENROUTER_CHAIN]]) {
+      const shared = [...set(chain, key)].filter((f) => ocSet.has(f));
+      assert.deepEqual(shared, [], `${key} shared by OPENCODE_CHAIN and ${name}`);
+    }
+  }
+  assert.ok(!oc.some((id) => /deepseek/.test(id)), "deepseek belongs to the deepseek engine");
 });
