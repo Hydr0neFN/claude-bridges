@@ -4,9 +4,9 @@
 // context floor and can be left dangling by tool-search deferral; as a CLI it
 // costs nothing until called. Shares lib/engines.js with the MCP version.
 //
-// Engines: copilot, codex, deepseek, agy, nim, openrouter, dsapi, gemini
+// Engines: copilot, codex, deepseek, agy, nim, openrouter, dsapi, gemini, azure
 // Usage: consult "<prompt>" | --prompt-file <path|-> [--mode all|first] [--order copilot,codex] [--cwd <dir>] [--out-dir <dir>]
-//        [--copilot-model M] [--copilot-effort E] [--codex-model M] [--codex-effort E] [--nim-model M] [--openrouter-model M] [--dsapi-model M] [--gemini-model M]
+//        [--copilot-model M] [--copilot-effort E] [--codex-model M] [--codex-effort E] [--nim-model M] [--openrouter-model M] [--dsapi-model M] [--gemini-model M] [--azure-model M]
 //        --order entries are `engine` or `engine:model`, e.g. nim:moonshotai/kimi-k3,codex (model wins over the flags)
 //        consult --debate <spec.json> --out-dir <dir>   (structured debate, up to 3 rounds; writes <dir>/digest.md, prints its path + a TALLY line)
 //        --json (with a prompt, --mode all|first or --debate): stdout is exactly one {ok,code,message,data} object (docs/cli-json.md)
@@ -81,7 +81,7 @@ async function main() {
   }
   if (!prompt && !args.debate && !args.round2) {
     jsonFail("USAGE", "no prompt given");
-    console.error('usage: consult "<prompt>" | --prompt-file <path|-> [--mode all|first] [--order copilot,codex] [--cwd <dir>] [--out-dir <dir>] [--nim-model M] [--openrouter-model M] [--dsapi-model M] [--gemini-model M] | --debate <spec.json> --out-dir <dir> | --check-updates | --update | --check-nim-models');
+    console.error('usage: consult "<prompt>" | --prompt-file <path|-> [--mode all|first] [--order copilot,codex] [--cwd <dir>] [--out-dir <dir>] [--nim-model M] [--openrouter-model M] [--dsapi-model M] [--gemini-model M] [--azure-model M] | --debate <spec.json> --out-dir <dir> | --check-updates | --update | --check-nim-models');
     process.exit(2);
   }
 
@@ -90,7 +90,7 @@ async function main() {
   // A retired engine is a hard usage error, not a silent drop (parseOrderDetailed still drops unknown entries).
   const retiredEntry = retiredInOrder(rawOrder);
   if (retiredEntry) {
-    const msg = `consult: engine ${retiredEntry} was removed (unknown engine); use copilot,codex,deepseek,agy,nim,openrouter,gemini`;
+    const msg = `consult: engine ${retiredEntry} was removed (unknown engine); use copilot,codex,deepseek,agy,nim,openrouter,gemini,azure`;
     jsonFail("USAGE", msg);
     console.error(msg);
     process.exit(2);
@@ -100,10 +100,11 @@ async function main() {
     openrouterModel: args.openrouterModel || process.env.OPENROUTER_MODEL,
     dsapiModel: args.dsapiModel || process.env.DSAPI_MODEL,
     geminiModel: args.geminiModel || process.env.GEMINI_MODEL,
+    azureModel: args.azureModel || process.env.AZURE_OPENAI_MODEL,
   });
   if (dropped.length) console.error(`consult: ignoring invalid order entries: ${dropped.join(", ")}`);
   if (!order.length) {
-    console.error("consult: no valid engine in the order (use engine or engine:model; a model only on copilot, codex, nim, deepseek, openrouter, dsapi, gemini)");
+    console.error("consult: no valid engine in the order (use engine or engine:model; a model only on copilot, codex, nim, deepseek, openrouter, dsapi, gemini, azure)");
     jsonFail("USAGE", "no valid engine in the order");
     process.exit(2);
   }
@@ -124,6 +125,7 @@ async function main() {
     openrouter: { model: args.openrouterModel },
     dsapi: { model: args.dsapiModel },
     gemini: { model: args.geminiModel },
+    azure: { model: args.azureModel },
   };
   if (args.outDir && !args.debate && !args.round2) {
     fs.mkdirSync(args.outDir, { recursive: true });

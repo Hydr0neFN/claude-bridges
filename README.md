@@ -43,6 +43,7 @@ The `consult` tool currently fans out to **five engines**:
 | `openrouter` | OpenRouter free models (HTTP, not a CLI) | Free (rate-limited); in the default order (after `nim`), with a 5-model fallback chain |
 | `dsapi` | Official DeepSeek API, flash models only (HTTP, not a CLI) | Pay-per-token (cheap); **opt-in (not in default order)**, but also the automatic fallback of `deepseek` |
 | `gemini` | Google Gemini API (OpenAI-compatible endpoint, HTTP, not a CLI) | AI Studio free-tier key (`GEMINI_API_KEY` or `~/.gemini-api-key`); prompt-only; agy fallback |
+| `azure` | Azure OpenAI chat completions (HTTP, not a CLI) | Azure subscription key (`AZURE_OPENAI_KEY` or `~/.azure-openai-key`) plus endpoint (`AZURE_OPENAI_ENDPOINT` or `~/.azure-openai-endpoint`); **opt-in (not in default order)**; prompt-only |
 
 `agy` was opt-in because its Google AI Plus quota is small; since 2026-10-27 it is in the default order until that quota is used up (before: `--order copilot,codex,deepseek,agy`)
 or the MCP `order` argument, ideally once per review.

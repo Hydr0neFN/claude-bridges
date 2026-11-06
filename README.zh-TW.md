@@ -43,6 +43,7 @@ flowchart TD
 | `openrouter` | OpenRouter 免費模型（HTTP，非 CLI） | Free（有速率限制）；列入預設順序（在 `nim` 之後），並帶有 5 個模型的備援鏈 |
 | `dsapi` | DeepSeek 官方 API，僅限 flash 模型（HTTP，非 CLI） | 按量計費（便宜）；**選用（不在預設順序中）**，但同時是 `deepseek` 的自動備援 |
 | `gemini` | Google Gemini API（OpenAI 相容端點，HTTP，非 CLI） | Google AI Studio 免費方案金鑰（`GEMINI_API_KEY` 或 `~/.gemini-api-key`）；僅傳 prompt；`agy` 備援 |
+| `azure` | Azure OpenAI 聊天補全（HTTP，非 CLI） | Azure 訂閱金鑰（`AZURE_OPENAI_KEY` 或 `~/.azure-openai-key`）加端點（`AZURE_OPENAI_ENDPOINT` 或 `~/.azure-openai-endpoint`）；**需手動指定（不在預設順序）**；僅傳 prompt |
 
 `agy` 原本採選用制（Google AI Plus 配額很少）；2026-10-27 起列入預設順序，配額用完即移除（之前以 `--order copilot,codex,deepseek,agy`
 或 MCP 的 `order` 引數加入，建議每次審查只呼叫一次。
