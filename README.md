@@ -65,8 +65,8 @@ No key means the engine is reported as `[failed] no key`; the other engines stil
 Requests go to `https://openrouter.ai/api/v1/chat/completions` (`max_tokens` 1500).
 Free models are rate-limited, so a bare `openrouter` (and a model set by `--openrouter-model` / `OPENROUTER_MODEL`, or
 `openrouter:<that default>`) walks a fallback chain, starting with the requested model (5 attempts at most; override the list with
-`OPENROUTER_CHAIN=a/x:free,b/y:free`): `poolside/laguna-s-2.1:free` -> `cohere/north-mini-code:free` -> `recursive/flint-v1.0:free` ->
-`dots-studio/dots-3-note-preview:free` -> `liquid/lfm-2.5-2.6b:free`. It steps past 404, 410, 429, 5xx (also a 200 carrying such an error),
+`OPENROUTER_CHAIN=a/x:free,b/y:free`): `poolside/laguna-s-2.1:free` -> `dots-studio/dots-3-note-preview:free` -> `cohere/north-mini-code:free` ->
+`recursive/flint-v1.0:free` -> `liquid/lfm-2.5-2.6b:free`. It steps past 404, 410, 429, 5xx (also a 200 carrying such an error),
 a 400 "not a valid model ID" (delisted model), timeouts, network errors, empty answers and reasoning-only answers; any other error
 (401 bad key, 402 no credit, other 400) ends the chain at once. A leading `<think>...</think>` block is stripped. The result is labelled
 with the model that answered (`openrouter:<model>`); if every attempt fails, the failure lists each model and why (a 429 shows as
@@ -403,7 +403,7 @@ Overrides for the consult panel: `COPILOT_BRIDGE_BIN`, `CODEX_BRIDGE_BIN`, `AGY_
 | `OPENROUTER_API_KEY` | (unset) | OpenRouter key; takes precedence over the key file |
 | `OPENROUTER_KEY_PATH` | `~/.openrouter-key` | Key file read when `OPENROUTER_API_KEY` is unset (the first `sk-or-...` token is used) |
 | `OPENROUTER_MODEL` | `poolside/laguna-s-2.1:free` | Default OpenRouter model when neither the order entry nor `--openrouter-model` sets one (first step of the fallback chain) |
-| `OPENROUTER_CHAIN` | `poolside/laguna-s-2.1:free,cohere/north-mini-code:free,recursive/flint-v1.0:free,dots-studio/dots-3-note-preview:free,liquid/lfm-2.5-2.6b:free` | Comma list of models the fallback chain walks after the requested one (5 attempts at most; each step 60 s at most, whole chain within `OPENROUTER_TIMEOUT`) |
+| `OPENROUTER_CHAIN` | `poolside/laguna-s-2.1:free,dots-studio/dots-3-note-preview:free,cohere/north-mini-code:free,recursive/flint-v1.0:free,liquid/lfm-2.5-2.6b:free` | Comma list of models the fallback chain walks after the requested one (5 attempts at most; each step 60 s at most, whole chain within `OPENROUTER_TIMEOUT`) |
 | `OPENROUTER_TIMEOUT` | `300` | Whole openrouter chain budget in seconds (positive number); capped at 600, ignores `CONSULT_TIMEOUT` |
 | `DEEPSEEK_API_KEY` | (unset) | Official DeepSeek API key for `dsapi`; takes precedence over the key file |
 | `DSAPI_KEY_PATH` | `~/.deepseek-api-key` | Key file read when `DEEPSEEK_API_KEY` is unset (the first `sk-...` token is used) |

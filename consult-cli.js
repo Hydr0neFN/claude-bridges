@@ -127,7 +127,7 @@ async function main() {
     dsapi: { model: args.dsapiModel },
     gemini: { model: args.geminiModel },
     azure: { model: args.azureModel },
-    opencode: { model: args.opencodeModel },
+    opencode: { model: args.opencodeModel, panel: { order, get ran() { return ran; } } },
   };
   if (args.outDir && !args.debate && !args.round2) {
     fs.mkdirSync(args.outDir, { recursive: true });

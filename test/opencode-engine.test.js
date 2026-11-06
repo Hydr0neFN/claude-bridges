@@ -8,7 +8,7 @@ import { parseOrder, parseArgs } from "../lib/args.js";
 import { resolveOpenCode, NotInstalledError } from "../lib/common.js";
 import { recordLock, LOCKABLE } from "../lib/locks.js";
 import {
-  ENGINES, MODEL_ENGINES, OPENCODE_CHAIN, DEFAULT_OPENCODE_MODEL, opencodeChain, opencodeModels, opencodeTimeoutSec,
+  ENGINES, MODEL_ENGINES, OPENCODE_CHAIN, OPENCODE_PRIMARY, reserveBlocked, DEFAULT_OPENCODE_MODEL, opencodeChain, opencodeModels, opencodeTimeoutSec,
   parseOpenCodeJson, runSpec,
 } from "../lib/engines.js";
 
@@ -55,9 +55,10 @@ test("opencode is registered: model engine, lockable, last of the old default an
   assert.deepEqual(parseOrder(`opencode:${DEFAULT_OPENCODE_MODEL},opencode`), ["opencode"]);
 });
 
-test("chain: three free models, none shared with nim, openrouter or deepseek; env override and model-first ordering", () => {
-  assert.deepEqual(OPENCODE_CHAIN, ["beam-free", "mimo-v2.6-flash-free", "big-pickle"]);
-  assert.ok(!OPENCODE_CHAIN.some((m) => /deepseek|nemotron|glm|flint/.test(m)));
+test("chain: three primary free models plus two reserve ones; env override and model-first ordering", () => {
+  assert.deepEqual(OPENCODE_CHAIN, ["beam-free", "big-pickle", "mimo-v2.6-flash-free", "glm-5.3-flash-free", "flint-40b-free"]);
+  assert.deepEqual(OPENCODE_PRIMARY, OPENCODE_CHAIN.slice(0, 3));
+  assert.ok(!OPENCODE_CHAIN.some((m) => /deepseek|nemotron/.test(m)));
   assert.deepEqual(opencodeChain({ OPENCODE_CHAIN: " a , b ,," }), ["a", "b"]);
   assert.deepEqual(opencodeChain({}), OPENCODE_CHAIN);
   assert.deepEqual(opencodeModels(M3, { OPENCODE_CHAIN: CHAIN5 }), [M3, M1, M2, M4, M5]);
@@ -167,4 +168,40 @@ test("resolveOpenCode: a Windows .cmd shim resolves to the program it launches",
   assert.deepEqual(r, { cmd: exe, pre: [] });
   fs.writeFileSync(path.join(dir, "opencode.cmd"), "@ECHO off\r\nrem nothing\r\n");
   assert.throws(() => resolveOpenCode({ env: { PATH: dir }, platform: "win32" }), NotInstalledError);
+});
+
+const KEYS = { env: { NIM_API_KEY: "k", OPENROUTER_API_KEY: "k" } };
+
+test("reserveBlocked: a reserve model is avoided while its owner engine is active, used when that provider is unavailable", () => {
+  const order = ["copilot", "nim", "openrouter", "opencode"];
+  assert.equal(reserveBlocked("beam-free", { order, ran: [] }, KEYS), false, "primary models are never blocked");
+  assert.equal(reserveBlocked("glm-5.3-flash-free", undefined, KEYS), false, "no panel context: not blocked");
+  assert.equal(reserveBlocked("glm-5.3-flash-free", { order, ran: [] }, KEYS), true, "nim still running");
+  assert.equal(reserveBlocked("flint-40b-free", { order, ran: [] }, KEYS), true, "openrouter still running");
+  assert.equal(reserveBlocked("glm-5.3-flash-free", { order: ["opencode"], ran: [] }, KEYS), false, "nim not in the order");
+  const noKey = { env: { NIM_API_KEY: "", NIM_KEY_PATH: "/nonexistent/nim", OPENROUTER_API_KEY: "", OPENROUTER_KEY_PATH: "/nonexistent/or" }, home: "/nonexistent" };
+  assert.equal(reserveBlocked("glm-5.3-flash-free", { order, ran: [] }, noKey), false, "no nim key");
+  assert.equal(reserveBlocked("flint-40b-free", { order, ran: [] }, noKey), false, "no openrouter key");
+  const nimFailed = [{ engine: "nim", ok: false, reason: "down" }];
+  assert.equal(reserveBlocked("glm-5.3-flash-free", { order, ran: nimFailed }, KEYS), false, "nim already failed");
+  const nimOther = [{ engine: "nim:nvidia/nemotron-3-ultra", ok: true, body: "x" }];
+  assert.equal(reserveBlocked("glm-5.3-flash-free", { order, ran: nimOther }, KEYS), false, "nim answered with another family");
+  const nimGlm = [{ engine: "nim:z-ai/glm-5.3-flash", ok: true, body: "x" }];
+  assert.equal(reserveBlocked("glm-5.3-flash-free", { order, ran: nimGlm }, KEYS), true, "nim answered with glm");
+});
+
+test("opencode chain skips blocked reserve models and uses them once the owner is unavailable", async () => {
+  const sc = { [M1]: { stderr: "boom", code: 2 } };
+  const f = fake({ ...sc });
+  const withReserve = { ...f.env, OPENCODE_CHAIN: "p1,glm-5.3-flash-free,flint-40b-free", ...KEYS.env };
+  const f2 = fake({ p1: { stderr: "boom", code: 2 }, "glm-5.3-flash-free": { stdout: okOut("glm") }, "flint-40b-free": { stdout: okOut("flint") } });
+  const env = { ...f2.env, OPENCODE_CHAIN: "p1,glm-5.3-flash-free,flint-40b-free", ...KEYS.env };
+  const active = { order: ["nim", "openrouter", "opencode"], ran: [] };
+  const r = await ENGINES.opencode({ prompt: "hi", env, panel: active });
+  assert.equal(r.ok, false, "both reserve models blocked, primary failed");
+  assert.deepEqual(f2.calls().map((c) => c.model), ["p1"]);
+  const f3 = fake({ p1: { stderr: "boom", code: 2 }, "glm-5.3-flash-free": { stdout: okOut("glm") } });
+  const r2 = await ENGINES.opencode({ prompt: "hi", env: { ...f3.env, OPENCODE_CHAIN: "p1,glm-5.3-flash-free,flint-40b-free", ...KEYS.env }, panel: { order: ["opencode"], ran: [] } });
+  assert.equal(r2.engine, "opencode:glm-5.3-flash-free");
+  void withReserve;
 });

@@ -64,7 +64,7 @@ flowchart TD
 請求送往 `https://openrouter.ai/api/v1/chat/completions`（`max_tokens` 1500）。
 免費模型有速率限制，因此裸 `openrouter`（以及由 `--openrouter-model` / `OPENROUTER_MODEL` 指定的模型，或 `openrouter:<該預設模型>`）會依備援鏈往下試，
 由指定的模型開始（最多 5 次；可用 `OPENROUTER_CHAIN=a/x:free,b/y:free` 覆寫）：
-`poolside/laguna-s-2.1:free` -> `cohere/north-mini-code:free` -> `recursive/flint-v1.0:free` -> `dots-studio/dots-3-note-preview:free` -> `liquid/lfm-2.5-2.6b:free`。
+`poolside/laguna-s-2.1:free` -> `dots-studio/dots-3-note-preview:free` -> `cohere/north-mini-code:free` -> `recursive/flint-v1.0:free` -> `liquid/lfm-2.5-2.6b:free`。
 遇到 404、410、429、5xx（含 HTTP 200 內夾帶的同類錯誤）、400「not a valid model ID」（模型已下架）、逾時、網路錯誤、空回覆或只含推理過程的回覆時換下一個；
 其他錯誤（401 金鑰無效、402 無額度、其他 400）會立即結束備援鏈。開頭的 `<think>...</think>` 區塊會被移除。
 結果會標示為實際回答的模型（`openrouter:<model>`）；若全部失敗，失敗訊息會列出各模型與原因（429 顯示為 `rate-limited`）。
@@ -356,7 +356,7 @@ consult 小組的覆寫變數：`COPILOT_BRIDGE_BIN`、`CODEX_BRIDGE_BIN`、`AGY
 | `OPENROUTER_API_KEY` | （未設定） | OpenRouter 金鑰，優先於金鑰檔案 |
 | `OPENROUTER_KEY_PATH` | `~/.openrouter-key` | 未設 `OPENROUTER_API_KEY` 時讀取的金鑰檔案（取第一個 `sk-or-...` 字串） |
 | `OPENROUTER_MODEL` | `poolside/laguna-s-2.1:free` | 順序項目與 `--openrouter-model` 都未指定時的預設 OpenRouter 模型（備援鏈第一步） |
-| `OPENROUTER_CHAIN` | `poolside/laguna-s-2.1:free,cohere/north-mini-code:free,recursive/flint-v1.0:free,dots-studio/dots-3-note-preview:free,liquid/lfm-2.5-2.6b:free` | 備援鏈在指定模型之後依序嘗試的模型（逗號分隔；最多 5 次，每步最多 60 秒，整條鏈受 `OPENROUTER_TIMEOUT` 限制） |
+| `OPENROUTER_CHAIN` | `poolside/laguna-s-2.1:free,dots-studio/dots-3-note-preview:free,cohere/north-mini-code:free,recursive/flint-v1.0:free,liquid/lfm-2.5-2.6b:free` | 備援鏈在指定模型之後依序嘗試的模型（逗號分隔；最多 5 次，每步最多 60 秒，整條鏈受 `OPENROUTER_TIMEOUT` 限制） |
 | `OPENROUTER_TIMEOUT` | `300` | openrouter 整條備援鏈的逾時秒數（正數）；上限 600，忽略 `CONSULT_TIMEOUT` |
 | `DEEPSEEK_API_KEY` | （未設定） | `dsapi` 使用的 DeepSeek 官方 API 金鑰，優先於金鑰檔案 |
 | `DSAPI_KEY_PATH` | `~/.deepseek-api-key` | 未設 `DEEPSEEK_API_KEY` 時讀取的金鑰檔案（取第一個 `sk-...` 字串） |
