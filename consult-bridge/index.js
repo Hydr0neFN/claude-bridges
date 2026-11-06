@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // consult-bridge: one tool, `consult`, over a panel of consultant CLIs
-// (copilot, codex, deepseek, nim by default; agy, openrouter and dsapi are opt-in, see lib/engines.js). Default mode "all" runs every engine in parallel and
+// (copilot, codex, deepseek, nim by default; agy, openrouter, dsapi and gemini are opt-in, see lib/engines.js). Default mode "all" runs every engine in parallel and
 // returns each successful answer labeled by engine — rationale: the engines sit
 // on different plan tiers (agy = paid Gemini Pro, others free), so first-come-
 // first-serve would systematically prefer the weakest agent. Mode "first" keeps
@@ -72,7 +72,7 @@ startServer("consult-bridge", "0.1.0", (server) => {
           .array(z.string())
           .optional()
           .describe(
-            "Engine set (mode 'all') or chain order (mode 'first'). Entries are an engine (copilot, codex, agy, nim, deepseek, openrouter, dsapi) or engine:model (e.g. nim:nvidia/nemotron-3-ultra-550b-a55b; a model only on copilot, codex, nim, deepseek, openrouter, dsapi). Defaults to copilot,codex,deepseek,agy,nim,openrouter (or CONSULT_ORDER env; agy is in the default only while it drains its remaining quota); deepseek needs the local deeperseeker proxy and falls back to the official DeepSeek API (flash) when it is down. dsapi is opt-in and only runs when listed; openrouter (free models) is in the default set; nim (NVIDIA NIM, free tier, slow models: up to 600 s, falls back through a 5-model chain unless a nim:<model> is named) is in the default set; dsapi is the official DeepSeek API limited to flash models, pay-per-token; openrouter (rate-limited, falls back through a 5-model chain unless an openrouter:<model> is named) sees only the prompt text like nim and deepseek. Invalid entries are ignored and reported. Pass a single entry to force one engine.",
+            "Engine set (mode 'all') or chain order (mode 'first'). Entries are an engine (copilot, codex, agy, nim, deepseek, openrouter, dsapi, gemini) or engine:model (e.g. nim:nvidia/nemotron-3-ultra-550b-a55b; a model only on copilot, codex, nim, deepseek, openrouter, dsapi, gemini). Defaults to copilot,codex,deepseek,agy,nim,openrouter (or CONSULT_ORDER env; agy is in the default only while it drains its remaining quota); deepseek needs the local deeperseeker proxy and falls back to the official DeepSeek API (flash) when it is down. dsapi is opt-in and only runs when listed; openrouter (free models) is in the default set; nim (NVIDIA NIM, free tier, slow models: up to 600 s, falls back through a 5-model chain unless a nim:<model> is named) is in the default set; dsapi is the official DeepSeek API limited to flash models, pay-per-token; openrouter (rate-limited, falls back through a 5-model chain unless an openrouter:<model> is named) sees only the prompt text like nim and deepseek; gemini (Google AI Studio key, opt-in, prompt-only, also the automatic fallback of agy when a key exists) falls back through a 3-model chain unless a gemini:<model> is named. Invalid entries are ignored and reported. Pass a single entry to force one engine.",
           ),
       },
     },
@@ -84,7 +84,7 @@ startServer("consult-bridge", "0.1.0", (server) => {
         ? parseOrderDetailed(given.join(","), undefined, NIM_OPTS())
         : { order: defaultOrder(), dropped: [] };
       if (!order.length) {
-        return errText(`consult: no valid engine in order (invalid: ${dropped.join(", ")}). Use engine or engine:model; a model only on copilot, codex, nim, deepseek, openrouter, dsapi.`);
+        return errText(`consult: no valid engine in order (invalid: ${dropped.join(", ")}). Use engine or engine:model; a model only on copilot, codex, nim, deepseek, openrouter, dsapi, gemini.`);
       }
       const run = (name) => runSpec(name, { prompt: args.prompt, cwd, timeoutSec: TIMEOUT_SEC });
       updates.pending.then((r) => { updates.items = r.items; });

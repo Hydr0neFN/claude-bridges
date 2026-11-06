@@ -4,9 +4,9 @@
 // context floor and can be left dangling by tool-search deferral; as a CLI it
 // costs nothing until called. Shares lib/engines.js with the MCP version.
 //
-// Engines: copilot, codex, deepseek, agy, nim, openrouter, dsapi
+// Engines: copilot, codex, deepseek, agy, nim, openrouter, dsapi, gemini
 // Usage: consult "<prompt>" | --prompt-file <path|-> [--mode all|first] [--order copilot,codex] [--cwd <dir>] [--out-dir <dir>]
-//        [--copilot-model M] [--copilot-effort E] [--codex-model M] [--codex-effort E] [--nim-model M] [--openrouter-model M] [--dsapi-model M]
+//        [--copilot-model M] [--copilot-effort E] [--codex-model M] [--codex-effort E] [--nim-model M] [--openrouter-model M] [--dsapi-model M] [--gemini-model M]
 //        --order entries are `engine` or `engine:model`, e.g. nim:moonshotai/kimi-k3,codex (model wins over the flags)
 //        consult --debate <spec.json> --out-dir <dir>   (structured debate, up to 3 rounds; writes <dir>/digest.md, prints its path + a TALLY line)
 //        --json (with a prompt, --mode all|first or --debate): stdout is exactly one {ok,code,message,data} object (docs/cli-json.md)
@@ -17,7 +17,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { runSpec, dsapiUsageNotice } from "./lib/engines.js";
+import { runSpec, dsapiUsageNotice, withGeminiFallback } from "./lib/engines.js";
 import { validateSpec, loadContext, runDebate } from "./lib/debate.js";
 import { parseArgs, parseOrderDetailed, resolvePrompt, retiredInOrder } from "./lib/args.js";
 import { runEnvelope, envelope, EXIT } from "./lib/cli-json.js";
@@ -81,7 +81,7 @@ async function main() {
   }
   if (!prompt && !args.debate && !args.round2) {
     jsonFail("USAGE", "no prompt given");
-    console.error('usage: consult "<prompt>" | --prompt-file <path|-> [--mode all|first] [--order copilot,codex] [--cwd <dir>] [--out-dir <dir>] [--nim-model M] [--openrouter-model M] [--dsapi-model M] | --debate <spec.json> --out-dir <dir> | --check-updates | --update | --check-nim-models');
+    console.error('usage: consult "<prompt>" | --prompt-file <path|-> [--mode all|first] [--order copilot,codex] [--cwd <dir>] [--out-dir <dir>] [--nim-model M] [--openrouter-model M] [--dsapi-model M] [--gemini-model M] | --debate <spec.json> --out-dir <dir> | --check-updates | --update | --check-nim-models');
     process.exit(2);
   }
 
@@ -90,7 +90,7 @@ async function main() {
   // A retired engine is a hard usage error, not a silent drop (parseOrderDetailed still drops unknown entries).
   const retiredEntry = retiredInOrder(rawOrder);
   if (retiredEntry) {
-    const msg = `consult: engine ${retiredEntry} was removed (unknown engine); use copilot,codex,deepseek,agy,nim,openrouter`;
+    const msg = `consult: engine ${retiredEntry} was removed (unknown engine); use copilot,codex,deepseek,agy,nim,openrouter,gemini`;
     jsonFail("USAGE", msg);
     console.error(msg);
     process.exit(2);
@@ -99,10 +99,11 @@ async function main() {
     nimModel: args.nimModel || process.env.NIM_MODEL,
     openrouterModel: args.openrouterModel || process.env.OPENROUTER_MODEL,
     dsapiModel: args.dsapiModel || process.env.DSAPI_MODEL,
+    geminiModel: args.geminiModel || process.env.GEMINI_MODEL,
   });
   if (dropped.length) console.error(`consult: ignoring invalid order entries: ${dropped.join(", ")}`);
   if (!order.length) {
-    console.error("consult: no valid engine in the order (use engine or engine:model; a model only on copilot, codex, nim, deepseek, openrouter, dsapi)");
+    console.error("consult: no valid engine in the order (use engine or engine:model; a model only on copilot, codex, nim, deepseek, openrouter, dsapi, gemini)");
     jsonFail("USAGE", "no valid engine in the order");
     process.exit(2);
   }
@@ -122,13 +123,15 @@ async function main() {
     nim: { model: args.nimModel },
     openrouter: { model: args.openrouterModel },
     dsapi: { model: args.dsapiModel },
+    gemini: { model: args.geminiModel },
   };
   if (args.outDir && !args.debate && !args.round2) {
     fs.mkdirSync(args.outDir, { recursive: true });
     fs.writeFileSync(path.join(args.outDir, "_prompt.md"), `${prompt}\n`); // lets --round2 <out-dir> re-ask without the prompt
   }
   const ran = []; // --json mode first: every engine tried, in order
-  const runLocked = withLocks(runSpec, { ignore: args.ignoreLocks });
+  // withLocks inner so an agy quota failure still writes its lock before the Gemini fallback runs.
+  const runLocked = withGeminiFallback(withLocks(runSpec, { ignore: args.ignoreLocks }));
   const run = (name) => runLocked(name, { prompt, cwd, timeoutSec: TIMEOUT_SEC }, opts).then((r) => (ran.push(r), r));
 
   // Resolves true once the stream has flushed `text` (a write to a closed pipe reports false).
