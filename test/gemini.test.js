@@ -13,7 +13,7 @@ import {
 // Built at runtime so no key-shaped literal lands in the repo.
 const FAKE_KEY = "AIza" + "x".repeat(35);
 const ALT_KEY = "AIza" + "y".repeat(35);
-const [M1, M2, M3] = GEMINI_CHAIN;
+const [M1, M2, M3, M4] = GEMINI_CHAIN;
 
 const reply = (message, finish_reason = "stop") => ({ choices: [{ message, finish_reason }] });
 const ok = (message) => () => new Response(JSON.stringify(reply(message)), { status: 200 });
@@ -98,9 +98,8 @@ test("gemini: 5xx, 404, empty content and timeouts also step on; 410 included", 
   };
   const f = fakeFetch([status(503), status(404), ok({ content: "  " }), ok({ content: "fine" })]);
   const r = await run(f);
-  assert.deepEqual(called(f), [M1, M2, M3]);
-  assert.equal(r.ok, false);
-  assert.match(r.reason, /empty output/);
+  assert.deepEqual(called(f), [M1, M2, M3, M4]);
+  assert.deepEqual(r, { engine: `gemini:${M4}`, ok: true, body: "fine" });
 
   const g = fakeFetch([status(410), timeout, ok({ content: "late" })]);
   const r2 = await run(g);
@@ -161,19 +160,19 @@ test("gemini chain: explicit gemini:<model> other than the default runs only tha
 test("gemini chain: model precedence and env chain override", () => {
   assert.deepEqual(geminiChain({ GEMINI_CHAIN: " a-m , b-m ,, " }), ["a-m", "b-m"]);
   assert.deepEqual(geminiChain({ GEMINI_CHAIN: " , " }), GEMINI_CHAIN);
-  assert.deepEqual(geminiModels("custom"), ["custom", M1, M2]);
-  assert.deepEqual(geminiModels(M2), [M2, M1, M3]);
-  assert.equal(GEMINI_MAX_ATTEMPTS, 3);
+  assert.deepEqual(geminiModels("custom"), ["custom", M1, M2, M3]);
+  assert.deepEqual(geminiModels(M2), [M2, M1, M3, M4]);
+  assert.equal(GEMINI_MAX_ATTEMPTS, 4);
   assert.equal(MODEL_ENGINES.includes("gemini"), true);
 });
 
-test("geminiTimeoutSec: default 270, GEMINI_TIMEOUT honoured, clamped to 600, garbage -> 270", () => {
-  assert.equal(GEMINI_ATTEMPT_TIMEOUT_SEC * GEMINI_MAX_ATTEMPTS, 270);
-  assert.equal(geminiTimeoutSec({}), 270);
+test("geminiTimeoutSec: default 360, GEMINI_TIMEOUT honoured, clamped to 600, garbage -> 360", () => {
+  assert.equal(GEMINI_ATTEMPT_TIMEOUT_SEC * GEMINI_MAX_ATTEMPTS, 360);
+  assert.equal(geminiTimeoutSec({}), 360);
   assert.equal(geminiTimeoutSec({ GEMINI_TIMEOUT: "120" }), 120);
   assert.equal(geminiTimeoutSec({ GEMINI_TIMEOUT: "9999" }), 600);
-  assert.equal(geminiTimeoutSec({ GEMINI_TIMEOUT: "abc" }), 270);
-  assert.equal(geminiTimeoutSec({ GEMINI_TIMEOUT: "-5" }), 270);
+  assert.equal(geminiTimeoutSec({ GEMINI_TIMEOUT: "abc" }), 360);
+  assert.equal(geminiTimeoutSec({ GEMINI_TIMEOUT: "-5" }), 360);
 });
 
 test("parseOrder / parseArgs: gemini entries, default model normalisation, --gemini-model", () => {
