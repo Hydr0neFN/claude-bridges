@@ -41,17 +41,18 @@ The `consult` tool currently fans out to **five engines**:
 | `deepseek` | `deeperseeker` proxy over a DeepSeek web account (HTTP, not a CLI) | Free (throwaway account) |
 | `nim` | NVIDIA NIM hosted API (HTTP, not a CLI) | Free trial tier; in the default order, with a 5-model fallback chain |
 | `openrouter` | OpenRouter free models (HTTP, not a CLI) | Free (rate-limited); in the default order (after `nim`), with a 5-model fallback chain |
+| `opencode` | Official OpenCode CLI (`opencode`, logged in to OpenCode Zen) on its free models | Free; in the default order (after `openrouter`), with a 5-model fallback chain (`OPENCODE_CHAIN` overrides, `--opencode-model M` starts it at M). Runs in an empty temp dir with the read-only `plan` agent, prompt on stdin. **Free models may be logged or used by the provider: send non-private prompts only.** |
 | `dsapi` | Official DeepSeek API, flash models only (HTTP, not a CLI) | Pay-per-token (cheap); **opt-in (not in default order)**, but also the automatic fallback of `deepseek` |
-| `gemini` | Google Gemini API (OpenAI-compatible endpoint, HTTP, not a CLI) | AI Studio free-tier key (`GEMINI_API_KEY` or `~/.gemini-api-key`); prompt-only; agy fallback |
-| `azure` | Azure OpenAI chat completions (HTTP, not a CLI) | Azure subscription key (`AZURE_OPENAI_KEY` or `~/.azure-openai-key`) plus endpoint (`AZURE_OPENAI_ENDPOINT` or `~/.azure-openai-endpoint`); **opt-in (not in default order)**; prompt-only |
+| `gemini` | Google Gemini API (OpenAI-compatible endpoint, HTTP, not a CLI) | AI Studio free-tier key (`GEMINI_API_KEY` or `~/.gemini-api-key`); prompt-only; in the default order (last), and also the automatic fallback of `agy` |
+| `azure` | Azure OpenAI chat completions (HTTP, not a CLI) | Azure subscription key (`AZURE_OPENAI_KEY` or `~/.azure-openai-key`) plus endpoint (`AZURE_OPENAI_ENDPOINT` or `~/.azure-openai-endpoint`); in the default order (after `opencode`); one model, no chain; prompt-only |
 
 `agy` was opt-in because its Google AI Plus quota is small; since 2026-10-27 it is in the default order until that quota is used up (before: `--order copilot,codex,deepseek,agy`)
 or the MCP `order` argument, ideally once per review.
 
 `deepseek` is in the default `CONSULT_ORDER` (last, so in mode `first` it is only a fallback). It needs the
 `deeperseeker` proxy on `127.0.0.1:4000`; if the proxy is down or has no key, it falls back to the official API (`dsapi`, flash only, label `deepseek->dsapi`; see below), or fails soft
-if that has no key either, and the other engines still answer. `nim` is in the default order too (after `deepseek`, so the default panel is `copilot,codex,deepseek,agy,nim,openrouter`); it walks a fallback chain, see below.
-`openrouter` is in the default order too (last; since 2026-10-27, so the default panel is `copilot,codex,deepseek,agy,nim,openrouter`). Its default model (`poolside/laguna-s-2.1:free`) is a different family from `nim`'s, so the two count as separate voices. Drop it with an explicit `--order` (e.g. `--order copilot,codex,deepseek`).
+if that has no key either, and the other engines still answer. `nim` is in the default order too (after `deepseek`, so the default panel is `copilot,codex,deepseek,agy,nim,openrouter,opencode,azure,gemini`); it walks a fallback chain, see below.
+`openrouter` is in the default order too (last; since 2026-10-27, so the default panel is `copilot,codex,deepseek,agy,nim,openrouter,opencode,azure,gemini`). Its default model (`poolside/laguna-s-2.1:free`) is a different family from `nim`'s, so the two count as separate voices. Drop it with an explicit `--order` (e.g. `--order copilot,codex,deepseek`).
 `dsapi` is opt-in as well (`--order copilot,codex,deepseek,dsapi`), and `deepseek` falls back to it on its own (see below).
 Unlike the CLI engines, `deepseek`, `nim`, `openrouter` and `dsapi` get no cwd, shell or file access — they only ever see the prompt text, so give them self-contained prompts.
 
@@ -262,7 +263,7 @@ consult({
 })
 ```
 
-Engine order configurable via `order` arg or `CONSULT_ORDER` env (default `copilot,codex,deepseek,agy,nim,openrouter`); both accept `engine:model` entries (the MCP `order` is a list of strings; invalid entries are ignored and reported, and an order with no valid entry is an error). A failed engine (quota, auth, timeout, empty output, nonzero exit) fails over to the next; the trail is appended to the result.
+Engine order configurable via `order` arg or `CONSULT_ORDER` env (default `copilot,codex,deepseek,agy,nim,openrouter,opencode,azure,gemini`); both accept `engine:model` entries (the MCP `order` is a list of strings; invalid entries are ignored and reported, and an order with no valid entry is an error). A failed engine (quota, auth, timeout, empty output, nonzero exit) fails over to the next; the trail is appended to the result.
 
 ### `copilot_exec`
 
@@ -380,7 +381,7 @@ Overrides for the consult panel: `COPILOT_BRIDGE_BIN`, `CODEX_BRIDGE_BIN`, `AGY_
 | `CONSULT_TIMEOUT` | `300` | Per-engine timeout in seconds (not used by `nim`, see `NIM_TIMEOUT`) |
 | `CONSULT_MAX_OUTPUT_CHARS` | `50000` | Total output truncation cap |
 | `CONSULT_PER_ENGINE_CHARS` | `20000` | Per-engine truncation in `all` mode |
-| `CONSULT_ORDER` | `copilot,codex,deepseek,agy,nim,openrouter` | Default engine order |
+| `CONSULT_ORDER` | `copilot,codex,deepseek,agy,nim,openrouter,opencode,azure,gemini` | Default engine order |
 | `CONSULT_MODE` | `all` | Default mode (`all` or `first`) |
 | `COPILOT_MODEL` | (unset = auto) | Passed as `--model` only when set. If Copilot rejects it (auto-only plans such as Student), retried once on auto and labelled `copilot (auto; <model> unavailable on this plan)` |
 | `COPILOT_EFFORT` | (unset) | `--reasoning-effort none\|minimal\|low\|medium\|high\|xhigh\|max` |

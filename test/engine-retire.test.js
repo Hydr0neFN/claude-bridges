@@ -11,7 +11,7 @@ import { parseOrder, parseOrderDetailed } from "../lib/args.js";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const CLI = path.join(ROOT, "consult-cli.js");
-const DEFAULT = ["copilot", "codex", "deepseek", "agy", "nim", "openrouter"];
+const DEFAULT = ["copilot", "codex", "deepseek", "agy", "nim", "openrouter", "opencode", "azure", "gemini"];
 const OUTSIDE = Date.parse("2026-10-26T22:00:00Z");
 const MOCK_KEY = "TEST_MOCK_qwen_key_0123";
 
@@ -86,7 +86,7 @@ function fakeFetch() {
   return fn;
 }
 
-test("C1a.1 default order is the six engines even with qwen keys present", (t) => {
+test("C1a.1 default order is the nine engines even with qwen keys present", (t) => {
   const tmp = tmpDir();
   const lab = path.join(tmp, "lab.key");
   fs.writeFileSync(lab, MOCK_KEY);

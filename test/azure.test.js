@@ -190,7 +190,7 @@ test("azure: order and args", () => {
   assert.deepEqual(parseOrderDetailed("azure:gpt-5-mini").order, ["azure"], "default model normalises to bare azure");
   assert.deepEqual(parseOrderDetailed("azure:gpt-5-mini", undefined, { azureModel: "x" }).order, ["azure:gpt-5-mini"]);
   assert.deepEqual(parseOrderDetailed("azure:x", undefined, { azureModel: "x" }).order, ["azure"]);
-  assert.ok(!parseOrderDetailed(undefined).order.some((s) => s.startsWith("azure")), "not in the default order");
+  assert.ok(parseOrderDetailed(undefined).order.includes("azure"), "in the default order");
   assert.equal(parseArgs(["--azure-model", "gpt-5", "hi"]).azureModel, "gpt-5");
   assert.equal(parseArgs(["hi"]).azureModel, null);
 });

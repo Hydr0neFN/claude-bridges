@@ -41,16 +41,17 @@ flowchart TD
 | `deepseek` | 以 `deeperseeker` proxy 代理 DeepSeek 網頁帳號（HTTP，非 CLI） | Free（拋棄式帳號） |
 | `nim` | NVIDIA NIM 託管 API（HTTP，非 CLI） | Free（試用方案） |
 | `openrouter` | OpenRouter 免費模型（HTTP，非 CLI） | Free（有速率限制）；列入預設順序（在 `nim` 之後），並帶有 5 個模型的備援鏈 |
+| `opencode` | 官方 OpenCode CLI（`opencode`，已登入 OpenCode Zen），使用其免費模型 | Free；列入預設順序（在 `openrouter` 之後），帶有 5 個模型的備援鏈（`OPENCODE_CHAIN` 可覆寫，`--opencode-model M` 從 M 開始）。在空的暫存目錄以唯讀的 `plan` agent 執行，prompt 走 stdin。**免費模型的內容可能被供應商記錄或使用：只送非機密的 prompt。** |
 | `dsapi` | DeepSeek 官方 API，僅限 flash 模型（HTTP，非 CLI） | 按量計費（便宜）；**選用（不在預設順序中）**，但同時是 `deepseek` 的自動備援 |
-| `gemini` | Google Gemini API（OpenAI 相容端點，HTTP，非 CLI） | Google AI Studio 免費方案金鑰（`GEMINI_API_KEY` 或 `~/.gemini-api-key`）；僅傳 prompt；`agy` 備援 |
-| `azure` | Azure OpenAI 聊天補全（HTTP，非 CLI） | Azure 訂閱金鑰（`AZURE_OPENAI_KEY` 或 `~/.azure-openai-key`）加端點（`AZURE_OPENAI_ENDPOINT` 或 `~/.azure-openai-endpoint`）；**需手動指定（不在預設順序）**；僅傳 prompt |
+| `gemini` | Google Gemini API（OpenAI 相容端點，HTTP，非 CLI） | Google AI Studio 免費方案金鑰（`GEMINI_API_KEY` 或 `~/.gemini-api-key`）；僅傳 prompt；列入預設順序（最後），同時是 `agy` 的自動備援 |
+| `azure` | Azure OpenAI 聊天補全（HTTP，非 CLI） | Azure 訂閱金鑰（`AZURE_OPENAI_KEY` 或 `~/.azure-openai-key`）加端點（`AZURE_OPENAI_ENDPOINT` 或 `~/.azure-openai-endpoint`）；列入預設順序（在 `opencode` 之後）；單一模型、無備援鏈；僅傳 prompt |
 
 `agy` 原本採選用制（Google AI Plus 配額很少）；2026-10-27 起列入預設順序，配額用完即移除（之前以 `--order copilot,codex,deepseek,agy`
 或 MCP 的 `order` 引數加入，建議每次審查只呼叫一次。
 
 `deepseek` 已列入預設的 `CONSULT_ORDER`（排在最後，因此在 `first` 模式下僅作為備援）。它需要 `deeperseeker` proxy
 在 `127.0.0.1:4000` 運作；若 proxy 未啟動或沒有金鑰，會自動備援到官方 API（`dsapi`，僅限 flash，標示 `deepseek->dsapi`，見下），若也沒有金鑰則軟性失敗，其他引擎仍會照常回答。
-`nim` 也已列入預設順序（在 `deepseek` 之後，預設為 `copilot,codex,deepseek,agy,nim,openrouter`），並帶有 5 個模型的備援鏈（`nvidia/nemotron-3-ultra-550b-a55b` -> `minimaxai/minimax-m3.1-flash` -> `nvidia/nemotron-3.5-super-vl-120b-a12b` -> `z-ai/glm-5.3-flash` -> `openai/gpt-oss-20b`，可用 `NIM_CHAIN` 覆寫；每步最多 120 秒，整條鏈受 `NIM_TIMEOUT` 限制，上限 600 秒）；明確寫 `nim:<其他模型>` 時只跑該模型、不走備援鏈。`openrouter` 自 2026-10-27 起同樣列入預設順序，預設模型 `poolside/laguna-s-2.1:free` 與 `nim` 不同家族（兩條備援鏈的模型家族完全不重疊，由測試保證），兩者算作獨立的聲音；要排除它請明確指定 `--order`（例如 `--order copilot,codex,deepseek`）。`dsapi` 也是選用制（`--order copilot,codex,deepseek,dsapi`），且 `deepseek` 會自動備援到它（見下）。
+`nim` 也已列入預設順序（在 `deepseek` 之後，預設為 `copilot,codex,deepseek,agy,nim,openrouter,opencode,azure,gemini`），並帶有 5 個模型的備援鏈（`nvidia/nemotron-3-ultra-550b-a55b` -> `minimaxai/minimax-m3.1-flash` -> `nvidia/nemotron-3.5-super-vl-120b-a12b` -> `z-ai/glm-5.3-flash` -> `openai/gpt-oss-20b`，可用 `NIM_CHAIN` 覆寫；每步最多 120 秒，整條鏈受 `NIM_TIMEOUT` 限制，上限 600 秒）；明確寫 `nim:<其他模型>` 時只跑該模型、不走備援鏈。`openrouter` 自 2026-10-27 起同樣列入預設順序，預設模型 `poolside/laguna-s-2.1:free` 與 `nim` 不同家族（兩條備援鏈的模型家族完全不重疊，由測試保證），兩者算作獨立的聲音；要排除它請明確指定 `--order`（例如 `--order copilot,codex,deepseek`）。`dsapi` 也是選用制（`--order copilot,codex,deepseek,dsapi`），且 `deepseek` 會自動備援到它（見下）。
 與其他 CLI 引擎不同，`deepseek`、`nim`、`openrouter` 與 `dsapi` 沒有 cwd、shell 或檔案存取權限 ——
 只看得到 prompt 文字本身，因此送給它們的 prompt 必須自帶完整脈絡。
 
@@ -231,7 +232,7 @@ consult({
 })
 ```
 
-引擎順序可透過 `order` 引數或 `CONSULT_ORDER` 環境變數設定（預設為 `copilot,codex,deepseek,agy,nim,openrouter`；`order` 與 `CONSULT_ORDER` 的項目都可寫成 `engine:model`；MCP 的 `order` 是字串陣列，無效的項目會被忽略並回報，若沒有任何有效項目則回傳錯誤）。失敗的引擎（配額耗盡、驗證失敗、逾時、輸出為空、非零結束代碼）會自動容錯移轉至下一個引擎；相關歷程紀錄會附加於結果之後。
+引擎順序可透過 `order` 引數或 `CONSULT_ORDER` 環境變數設定（預設為 `copilot,codex,deepseek,agy,nim,openrouter,opencode,azure,gemini`；`order` 與 `CONSULT_ORDER` 的項目都可寫成 `engine:model`；MCP 的 `order` 是字串陣列，無效的項目會被忽略並回報，若沒有任何有效項目則回傳錯誤）。失敗的引擎（配額耗盡、驗證失敗、逾時、輸出為空、非零結束代碼）會自動容錯移轉至下一個引擎；相關歷程紀錄會附加於結果之後。
 
 ### `copilot_exec`
 
@@ -336,7 +337,7 @@ consult 小組的覆寫變數：`COPILOT_BRIDGE_BIN`、`CODEX_BRIDGE_BIN`、`AGY
 | `CONSULT_TIMEOUT` | `300` | 各引擎逾時時間（秒）（`nim` 不適用，請見 `NIM_TIMEOUT`） |
 | `CONSULT_MAX_OUTPUT_CHARS` | `50000` | 總輸出截斷上限字數 |
 | `CONSULT_PER_ENGINE_CHARS` | `20000` | `all` 模式下各引擎截斷字數 |
-| `CONSULT_ORDER` | `copilot,codex,deepseek,agy,nim,openrouter` | 預設引擎順序 |
+| `CONSULT_ORDER` | `copilot,codex,deepseek,agy,nim,openrouter,opencode,azure,gemini` | 預設引擎順序 |
 | `CONSULT_MODE` | `all` | 預設模式（`all` 或 `first`） |
 | `COPILOT_MODEL` | （未設 = auto） | 僅在設定時以 `--model` 傳入。若 Copilot 拒絕（如 Student 方案僅支援 auto），會改用 auto 重試一次並標示為 `copilot (auto; <model> unavailable on this plan)` |
 | `COPILOT_EFFORT` | （未設） | `--reasoning-effort none\|minimal\|low\|medium\|high\|xhigh\|max` |

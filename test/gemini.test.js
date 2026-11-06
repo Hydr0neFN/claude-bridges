@@ -183,7 +183,7 @@ test("parseOrder / parseArgs: gemini entries, default model normalisation, --gem
   assert.deepEqual(parseOrder("gemini:m,gemini", undefined, { geminiModel: "m" }), ["gemini"]);
   assert.equal(parseArgs(["--gemini-model", "a-m", "hi"]).geminiModel, "a-m");
   assert.equal(parseArgs(["hi"]).geminiModel, null);
-  assert.deepEqual(parseOrder(undefined), ["copilot", "codex", "deepseek", "agy", "nim", "openrouter"], "gemini stays opt-in");
+  assert.deepEqual(parseOrder(undefined), ["copilot", "codex", "deepseek", "agy", "nim", "openrouter", "opencode", "azure", "gemini"]);
 });
 
 /** withGeminiFallback over a withLocks-wrapped run: agy fails with a quota reason, everything else is runSpec. */
@@ -242,4 +242,13 @@ test("agy: without a Gemini key the result is exactly what it was (label and fai
   const r = await plain("agy", { prompt: "hi", env: {}, home: "/nowhere", readFile: missingKey, fetchImpl: f });
   assert.deepEqual(r, { engine: "agy", ok: false, reason: "exit 1: boom" });
   assert.equal(f.calls.length, 0);
+});
+
+test("withGeminiFallback skip: a failing agy does not call gemini when gemini is its own member", async () => {
+  const { withGeminiFallback } = await import("../lib/engines.js");
+  const calls = [];
+  const run = async (spec) => (calls.push(spec), { engine: spec, ok: false, reason: "down" });
+  const r = await withGeminiFallback(run, { skip: true })("agy", { env: { GEMINI_API_KEY: "k" } });
+  assert.equal(r.engine, "agy");
+  assert.deepEqual(calls, ["agy"]);
 });

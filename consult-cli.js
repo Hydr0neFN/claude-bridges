@@ -4,9 +4,9 @@
 // context floor and can be left dangling by tool-search deferral; as a CLI it
 // costs nothing until called. Shares lib/engines.js with the MCP version.
 //
-// Engines: copilot, codex, deepseek, agy, nim, openrouter, dsapi, gemini, azure
+// Engines: copilot, codex, deepseek, agy, nim, openrouter, opencode, dsapi, gemini, azure
 // Usage: consult "<prompt>" | --prompt-file <path|-> [--mode all|first] [--order copilot,codex] [--cwd <dir>] [--out-dir <dir>]
-//        [--copilot-model M] [--copilot-effort E] [--codex-model M] [--codex-effort E] [--nim-model M] [--openrouter-model M] [--dsapi-model M] [--gemini-model M] [--azure-model M]
+//        [--copilot-model M] [--copilot-effort E] [--codex-model M] [--codex-effort E] [--nim-model M] [--openrouter-model M] [--dsapi-model M] [--gemini-model M] [--azure-model M] [--opencode-model M]
 //        --order entries are `engine` or `engine:model`, e.g. nim:moonshotai/kimi-k3,codex (model wins over the flags)
 //        consult --debate <spec.json> --out-dir <dir>   (structured debate, up to 3 rounds; writes <dir>/digest.md, prints its path + a TALLY line)
 //        --json (with a prompt, --mode all|first or --debate): stdout is exactly one {ok,code,message,data} object (docs/cli-json.md)
@@ -17,7 +17,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { runSpec, dsapiUsageNotice, withGeminiFallback } from "./lib/engines.js";
+import { runSpec, dsapiUsageNotice, withGeminiFallback, parseSpec } from "./lib/engines.js";
 import { validateSpec, loadContext, runDebate } from "./lib/debate.js";
 import { parseArgs, parseOrderDetailed, resolvePrompt, retiredInOrder } from "./lib/args.js";
 import { runEnvelope, envelope, EXIT } from "./lib/cli-json.js";
@@ -86,11 +86,11 @@ async function main() {
   }
 
   // agy is in the default set only while it drains its remaining quota (owner 2026-10-27); drop it here and in lib/args.js once it reports quota exhausted.
-  const rawOrder = args.order || process.env.CONSULT_ORDER || "copilot,codex,deepseek,agy,nim,openrouter";
+  const rawOrder = args.order || process.env.CONSULT_ORDER || "copilot,codex,deepseek,agy,nim,openrouter,opencode,azure,gemini";
   // A retired engine is a hard usage error, not a silent drop (parseOrderDetailed still drops unknown entries).
   const retiredEntry = retiredInOrder(rawOrder);
   if (retiredEntry) {
-    const msg = `consult: engine ${retiredEntry} was removed (unknown engine); use copilot,codex,deepseek,agy,nim,openrouter,gemini,azure`;
+    const msg = `consult: engine ${retiredEntry} was removed (unknown engine); use copilot,codex,deepseek,agy,nim,openrouter,opencode,gemini,azure`;
     jsonFail("USAGE", msg);
     console.error(msg);
     process.exit(2);
@@ -101,10 +101,11 @@ async function main() {
     dsapiModel: args.dsapiModel || process.env.DSAPI_MODEL,
     geminiModel: args.geminiModel || process.env.GEMINI_MODEL,
     azureModel: args.azureModel || process.env.AZURE_OPENAI_MODEL,
+    opencodeModel: args.opencodeModel,
   });
   if (dropped.length) console.error(`consult: ignoring invalid order entries: ${dropped.join(", ")}`);
   if (!order.length) {
-    console.error("consult: no valid engine in the order (use engine or engine:model; a model only on copilot, codex, nim, deepseek, openrouter, dsapi, gemini, azure)");
+    console.error("consult: no valid engine in the order (use engine or engine:model; a model only on copilot, codex, nim, deepseek, openrouter, opencode, dsapi, gemini, azure)");
     jsonFail("USAGE", "no valid engine in the order");
     process.exit(2);
   }
@@ -126,6 +127,7 @@ async function main() {
     dsapi: { model: args.dsapiModel },
     gemini: { model: args.geminiModel },
     azure: { model: args.azureModel },
+    opencode: { model: args.opencodeModel },
   };
   if (args.outDir && !args.debate && !args.round2) {
     fs.mkdirSync(args.outDir, { recursive: true });
@@ -133,7 +135,8 @@ async function main() {
   }
   const ran = []; // --json mode first: every engine tried, in order
   // withLocks inner so an agy quota failure still writes its lock before the Gemini fallback runs.
-  const runLocked = withGeminiFallback(withLocks(runSpec, { ignore: args.ignoreLocks }));
+  const geminiMember = order.some((sp) => parseSpec(sp).engine === "gemini");
+  const runLocked = withGeminiFallback(withLocks(runSpec, { ignore: args.ignoreLocks }), { skip: geminiMember });
   const run = (name) => runLocked(name, { prompt, cwd, timeoutSec: TIMEOUT_SEC }, opts).then((r) => (ran.push(r), r));
 
   // Resolves true once the stream has flushed `text` (a write to a closed pipe reports false).
