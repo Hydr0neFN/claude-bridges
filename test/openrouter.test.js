@@ -154,7 +154,7 @@ test("openRouterCredit: negative credit skips the panel engine with zero chat ca
   const r = await ENGINES.openrouter({ prompt: "hi", env, fetchImpl: f, cacheFile, now: NOW });
   assert.deepEqual(r, {
     engine: `openrouter:${M1}`, ok: false,
-    reason: "openrouter skipped: credit USD -3 (negative balance)",
+    reason: "openrouter skipped: credit USD -3 (below the USD 0.5 gate)",
   });
   assert.equal(chatCalls(f).length, 0);
 });
