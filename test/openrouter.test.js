@@ -1,10 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { parseOrder, parseOrderDetailed, parseArgs } from "../lib/args.js";
 import {
   ENGINES, DEFAULT_OPENROUTER_MODEL, OPENROUTER_CHAIN, OPENROUTER_ATTEMPT_TIMEOUT_SEC, OPENROUTER_MAX_ATTEMPTS,
-  resolveOpenRouterKey, openRouterModels, openRouterChain, openRouterTimeoutSec, redact, runSpec,
+  resolveOpenRouterKey, openRouterModels, openRouterChain, openRouterTimeoutSec, openRouterCredit, redact, runSpec,
 } from "../lib/engines.js";
 
 // Built at runtime so no key-shaped literal lands in the repo.
@@ -27,6 +29,29 @@ function fakeFetch(responses) {
 }
 const env = { OPENROUTER_API_KEY: FAKE_KEY };
 const run = (fetchImpl, extra = {}) => ENGINES.openrouter({ prompt: "hi", env, fetchImpl, ...extra });
+
+const NOW = 1_700_000_000;
+
+/** Fresh cache file path for one test (os.tmpdir(), never the real ~/.cache). */
+function tempCreditFile() {
+  return path.join(fs.mkdtempSync(path.join(os.tmpdir(), "consult-or-credit-")), "or-credit.json");
+}
+
+/** fetch stub serving /credits with `credit` USD and chat completions with `chat`. */
+function creditFetch({ credit, chat = ok({ content: "ok" }), creditError = false } = {}) {
+  const calls = [];
+  const fn = async (url, init) => {
+    calls.push({ url, init, body: init.body ? JSON.parse(init.body) : null });
+    if (url.endsWith("/credits")) {
+      if (creditError) throw new TypeError("fetch failed");
+      return new Response(JSON.stringify({ data: { total_credits: credit + 5, total_usage: 5 } }), { status: 200 });
+    }
+    return chat();
+  };
+  fn.calls = calls;
+  return fn;
+}
+const chatCalls = (f) => f.calls.filter((c) => c.url.endsWith("/chat/completions"));
 
 test("resolveOpenRouterKey: env > file (first sk-or token) > missing", () => {
   const file = path.join("/h", ".openrouter-key");
@@ -121,6 +146,58 @@ test("openrouter: an unreachable network falls through, then reports every attem
   assert.equal(n, 5);
   assert.equal(r.ok, false);
   assert.match(r.reason, /unreachable/);
+});
+
+test("openRouterCredit: negative credit skips the panel engine with zero chat calls", async () => {
+  const cacheFile = tempCreditFile();
+  const f = creditFetch({ credit: -3 });
+  const r = await ENGINES.openrouter({ prompt: "hi", env, fetchImpl: f, cacheFile, now: NOW });
+  assert.deepEqual(r, {
+    engine: `openrouter:${M1}`, ok: false,
+    reason: "openrouter skipped: credit USD -3 (negative balance)",
+  });
+  assert.equal(chatCalls(f).length, 0);
+});
+
+test("openRouterCredit: positive credit lets the engine run", async () => {
+  const cacheFile = tempCreditFile();
+  const f = creditFetch({ credit: 2 });
+  const r = await ENGINES.openrouter({ prompt: "hi", env, fetchImpl: f, cacheFile, now: NOW });
+  assert.equal(r.ok, true);
+  assert.equal(chatCalls(f).length, 1);
+  assert.deepEqual(JSON.parse(fs.readFileSync(cacheFile, "utf8")), { ts: NOW, credit: 2 });
+});
+
+test("openRouterCredit: a fresh cache is used without fetching", async () => {
+  const cacheFile = tempCreditFile();
+  fs.writeFileSync(cacheFile, JSON.stringify({ ts: NOW - 10, credit: 4 }));
+  let fetches = 0;
+  const f = async () => {
+    fetches++;
+    throw new TypeError("fetch failed");
+  };
+  assert.equal(await openRouterCredit({ key: FAKE_KEY, fetchImpl: f, now: NOW, cacheFile }), 4);
+  assert.equal(fetches, 0);
+});
+
+test("openRouterCredit: fetch error with a cache younger than 1 h uses the cached value", async () => {
+  const cacheFile = tempCreditFile();
+  fs.writeFileSync(cacheFile, JSON.stringify({ ts: NOW - 600, credit: -2 }));
+  const f = creditFetch({ credit: 0, creditError: true });
+  assert.equal(await openRouterCredit({ key: FAKE_KEY, fetchImpl: f, now: NOW, cacheFile }), -2);
+  const r = await ENGINES.openrouter({ prompt: "hi", env, fetchImpl: f, cacheFile, now: NOW });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /^openrouter skipped: credit USD -2 /);
+  assert.equal(chatCalls(f).length, 0);
+});
+
+test("openRouterCredit: fetch error without a cache means unknown credit, so the engine runs", async () => {
+  const cacheFile = tempCreditFile();
+  const f = creditFetch({ credit: 0, creditError: true });
+  assert.equal(await openRouterCredit({ key: FAKE_KEY, fetchImpl: f, now: NOW, cacheFile }), null);
+  const r = await ENGINES.openrouter({ prompt: "hi", env, fetchImpl: f, cacheFile, now: NOW });
+  assert.equal(r.ok, true);
+  assert.equal(chatCalls(f).length, 1);
 });
 
 test("openrouter: missing key -> failed result 'no key', never a throw, no request", async () => {
