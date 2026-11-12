@@ -80,7 +80,7 @@ test("openrouter: sends the documented request and returns the answer, labelled 
   assert.equal(init.headers["HTTP-Referer"], "claude-consult");
   assert.equal(init.headers["X-Title"], "claude-consult");
   assert.equal(body.model, DEFAULT_OPENROUTER_MODEL);
-  assert.equal(body.max_tokens, 1500);
+  assert.equal(body.max_tokens, 8192);
   assert.deepEqual(body.messages, [{ role: "user", content: "hi" }]);
 });
 

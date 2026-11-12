@@ -20,7 +20,7 @@ test("default chains: five models each, led by their engine default", () => {
   assert.equal(NIM_CHAIN.length, 5);
   assert.equal(OPENROUTER_CHAIN.length, 5);
   assert.equal(NIM_CHAIN[0], DEFAULT_NIM_MODEL);
-  assert.equal(OPENROUTER_CHAIN[0], "poolside/laguna-s-2.1:free");
+  assert.equal(OPENROUTER_CHAIN[0], "baidu/ernie-5.5-flash-preview:free");
   assert.equal(OPENROUTER_CHAIN[0], DEFAULT_OPENROUTER_MODEL);
 });
 

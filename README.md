@@ -52,7 +52,7 @@ or the MCP `order` argument, ideally once per review.
 `deepseek` is in the default `CONSULT_ORDER` (last, so in mode `first` it is only a fallback). It needs the
 `deeperseeker` proxy on `127.0.0.1:4000`; if the proxy is down or has no key, it falls back to the official API (`dsapi`, flash only, label `deepseek->dsapi`; see below), or fails soft
 if that has no key either, and the other engines still answer. `nim` is in the default order too (after `deepseek`, so the default panel is `copilot,codex,deepseek,agy,nim,openrouter,opencode,azure,gemini`); it walks a fallback chain, see below.
-`openrouter` is in the default order too (last; since 2026-10-27, so the default panel is `copilot,codex,deepseek,agy,nim,openrouter,opencode,azure,gemini`). Its default model (`poolside/laguna-s-2.1:free`) is a different family from `nim`'s, so the two count as separate voices. Drop it with an explicit `--order` (e.g. `--order copilot,codex,deepseek`).
+`openrouter` is in the default order too (last; since 2026-10-27, so the default panel is `copilot,codex,deepseek,agy,nim,openrouter,opencode,azure,gemini`). Its default model (`baidu/ernie-5.5-flash-preview:free`) is a different family from `nim`'s, so the two count as separate voices. Drop it with an explicit `--order` (e.g. `--order copilot,codex,deepseek`).
 `dsapi` is opt-in as well (`--order copilot,codex,deepseek,dsapi`), and `deepseek` falls back to it on its own (see below).
 Unlike the CLI engines, `deepseek`, `nim`, `openrouter` and `dsapi` get no cwd, shell or file access — they only ever see the prompt text, so give them self-contained prompts.
 
@@ -65,8 +65,8 @@ No key means the engine is reported as `[failed] no key`; the other engines stil
 Requests go to `https://openrouter.ai/api/v1/chat/completions` (`max_tokens` 1500).
 Free models are rate-limited, so a bare `openrouter` (and a model set by `--openrouter-model` / `OPENROUTER_MODEL`, or
 `openrouter:<that default>`) walks a fallback chain, starting with the requested model (5 attempts at most; override the list with
-`OPENROUTER_CHAIN=a/x:free,b/y:free`): `poolside/laguna-s-2.1:free` -> `dots-studio/dots-3-note-preview:free` -> `cohere/north-mini-code:free` ->
-`recursive/flint-v1.0:free` -> `liquid/lfm-2.5-2.6b:free`. It steps past 404, 410, 429, 5xx (also a 200 carrying such an error),
+`OPENROUTER_CHAIN=a/x:free,b/y:free`): `baidu/ernie-5.5-flash-preview:free` -> `dots-studio/dots-3-note-preview:free` -> `cohere/north-mini-code:free` ->
+`recursive/flint-v1.0:free` -> `liquid/lfm-3-1.7b:free`. It steps past 404, 410, 429, 5xx (also a 200 carrying such an error),
 a 400 "not a valid model ID" (delisted model), timeouts, network errors, empty answers and reasoning-only answers; any other error
 (401 bad key, 402 no credit, other 400) ends the chain at once. A leading `<think>...</think>` block is stripped. The result is labelled
 with the model that answered (`openrouter:<model>`); if every attempt fails, the failure lists each model and why (a 429 shows as
@@ -402,8 +402,8 @@ Overrides for the consult panel: `COPILOT_BRIDGE_BIN`, `CODEX_BRIDGE_BIN`, `AGY_
 | `NIM_MODELS_CHECK_DAYS` | `14` | Interval of the NIM new-model check (positive number of days) |
 | `OPENROUTER_API_KEY` | (unset) | OpenRouter key; takes precedence over the key file |
 | `OPENROUTER_KEY_PATH` | `~/.openrouter-key` | Key file read when `OPENROUTER_API_KEY` is unset (the first `sk-or-...` token is used) |
-| `OPENROUTER_MODEL` | `poolside/laguna-s-2.1:free` | Default OpenRouter model when neither the order entry nor `--openrouter-model` sets one (first step of the fallback chain) |
-| `OPENROUTER_CHAIN` | `poolside/laguna-s-2.1:free,dots-studio/dots-3-note-preview:free,cohere/north-mini-code:free,recursive/flint-v1.0:free,liquid/lfm-2.5-2.6b:free` | Comma list of models the fallback chain walks after the requested one (5 attempts at most; each step 60 s at most, whole chain within `OPENROUTER_TIMEOUT`) |
+| `OPENROUTER_MODEL` | `baidu/ernie-5.5-flash-preview:free` | Default OpenRouter model when neither the order entry nor `--openrouter-model` sets one (first step of the fallback chain) |
+| `OPENROUTER_CHAIN` | `baidu/ernie-5.5-flash-preview:free,dots-studio/dots-3-note-preview:free,cohere/north-mini-code:free,recursive/flint-v1.0:free,liquid/lfm-3-1.7b:free` | Comma list of models the fallback chain walks after the requested one (5 attempts at most; each step 60 s at most, whole chain within `OPENROUTER_TIMEOUT`) |
 | `OPENROUTER_TIMEOUT` | `300` | Whole openrouter chain budget in seconds (positive number); capped at 600, ignores `CONSULT_TIMEOUT` |
 | `DEEPSEEK_API_KEY` | (unset) | Official DeepSeek API key for `dsapi`; takes precedence over the key file |
 | `DSAPI_KEY_PATH` | `~/.deepseek-api-key` | Key file read when `DEEPSEEK_API_KEY` is unset (the first `sk-...` token is used) |
