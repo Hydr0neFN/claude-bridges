@@ -23,7 +23,7 @@ consult 小組的覆寫變數：`COPILOT_BRIDGE_BIN`、`CODEX_BRIDGE_BIN`、`AGY
 
 | 變數 | 預設值 | 說明 |
 |---|---|---|
-| `CODEX_BRIDGE_SANDBOX` | `read-only` | `read-only`、`workspace-write` 或 `danger-full-access`。亦可在每次呼叫時透過 `sandbox` 引數覆寫。 |
+| `CODEX_BRIDGE_SANDBOX` | `read-only` | `read-only`、`workspace-write` 或 `danger-full-access`。每次呼叫也可以用 `sandbox` 引數覆寫。 |
 
 ## consult-bridge
 

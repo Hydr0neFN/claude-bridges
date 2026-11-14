@@ -12,7 +12,7 @@
 | `deepseek` | 以 `deeperseeker` proxy 代理 DeepSeek 網頁帳號（HTTP，非 CLI） | Free（拋棄式帳號） |
 | `nim` | NVIDIA NIM 託管 API（HTTP，非 CLI） | Free 試用方案；列入預設順序，帶 5 個模型的備援鏈 |
 | `openrouter` | OpenRouter 免費模型（HTTP，非 CLI） | Free（有速率限制）；列入預設順序（在 `nim` 之後），並帶有 5 個模型的備援鏈 |
-| `opencode` | 官方 OpenCode CLI（`opencode`，已登入 OpenCode Zen），使用其免費模型 | Free；列入預設順序（在 `openrouter` 之後），帶有 5 個模型的備援鏈（`OPENCODE_CHAIN` 可覆寫，`--opencode-model M` 從 M 開始）。在空的暫存目錄以唯讀的 `plan` agent 執行，prompt 走 stdin。**免費模型的內容可能被供應商記錄或使用：只送非機密的 prompt。** |
+| `opencode` | 官方 OpenCode CLI（`opencode`，已登入 OpenCode Zen），使用其免費模型 | Free；列入預設順序（在 `openrouter` 之後），帶有 5 個模型的備援鏈（`OPENCODE_CHAIN` 可覆寫，`--opencode-model M` 從 M 開始）。在空的暫存目錄以唯讀的 `plan` agent 執行，prompt 走 stdin。**供應商可能會記錄或使用免費模型的內容：只送非機密的 prompt。** |
 | `dsapi` | DeepSeek 官方 API，僅限 flash 模型（HTTP，非 CLI） | 按量計費（便宜）；**選用（不在預設順序中）**，但同時是 `deepseek` 的自動備援 |
 | `gemini` | Google Gemini API（OpenAI 相容端點，HTTP，非 CLI） | Google AI Studio 免費方案金鑰（`GEMINI_API_KEY` 或 `~/.gemini-api-key`）；僅傳 prompt；列入預設順序（最後），同時是 `agy` 的自動備援 |
 | `azure` | Azure OpenAI 聊天補全（HTTP，非 CLI） | Azure 訂閱金鑰（`AZURE_OPENAI_KEY` 或 `~/.azure-openai-key`）加端點（`AZURE_OPENAI_ENDPOINT` 或 `~/.azure-openai-endpoint`）；列入預設順序（在 `opencode` 之後）；單一模型、無備援鏈；僅傳 prompt |
@@ -21,7 +21,7 @@
 或 MCP 的 `order` 引數加入，建議每次審查只呼叫一次）。
 
 `deepseek` 已列入預設的 `CONSULT_ORDER`（排在最後，因此在 `first` 模式下僅作為備援）。它需要 `deeperseeker` proxy
-在 `127.0.0.1:4000` 運作；若 proxy 未啟動或沒有金鑰，會自動備援到官方 API（`dsapi`，僅限 flash，標示 `deepseek->dsapi`，見下），若也沒有金鑰則軟性失敗，其他引擎仍會照常回答。
+在 `127.0.0.1:4000` 運作；若 proxy 未啟動或沒有金鑰，會自動改走官方 API（`dsapi`，僅限 flash，標示 `deepseek->dsapi`，見下），若也沒有金鑰則軟性失敗，其他引擎仍會照常回答。
 `nim` 也已列入預設順序（在 `deepseek` 之後，預設為 `copilot,codex,deepseek,agy,nim,openrouter,opencode,azure,gemini`），並帶有 5 個模型的備援鏈（`nvidia/nemotron-3-ultra-550b-a55b` -> `minimaxai/minimax-m3.1-flash` -> `nvidia/nemotron-3.5-super-vl-120b-a12b` -> `z-ai/glm-5.3-flash` -> `openai/gpt-oss-20b`，可用 `NIM_CHAIN` 覆寫；每步最多 120 秒，整條鏈受 `NIM_TIMEOUT` 限制，上限 600 秒）；明確寫 `nim:<其他模型>` 時只跑該模型、不走備援鏈。`openrouter` 自 2026-10-27 起同樣列入預設順序，預設模型 `baidu/ernie-5.5-flash-preview:free` 與 `nim` 不同家族（兩條備援鏈的模型家族完全不重疊，由測試保證），兩者算作獨立的聲音；要排除它請明確指定 `--order`（例如 `--order copilot,codex,deepseek`）。`dsapi` 也是選用制（`--order copilot,codex,deepseek,dsapi`），且 `deepseek` 會自動備援到它（見下）。
 與其他 CLI 引擎不同，`deepseek`、`nim`、`openrouter` 與 `dsapi` 沒有 cwd、shell 或檔案存取權限 ——
 只看得到 prompt 文字本身，因此送給它們的 prompt 必須自帶完整脈絡。
@@ -59,8 +59,8 @@
 **OpenRouter 額度優先（2026-10-28）。** 有 OpenRouter 金鑰時（`OPENROUTER_API_KEY` 或 `~/.openrouter-key`），`dsapi`
 先呼叫 OpenRouter 上的 `deepseek/deepseek-v4.1-flash`（模型在程式中固定，請求帶 `provider.data_collection: "deny"`），
 之後才用官方 API。OpenRouter 回 401/402/403（金鑰錯誤、額度用完）時，本程序其餘時間都改走官方 API；429/5xx/網路錯誤只
-讓該次請求回退。`DS_UPSTREAM=deepseek` 強制走官方 API。規則與 DS 工作者的金鑰代理（`~/.claude/bin/ds-keyproxy.py`）相同。
-由 OpenRouter 回答的結果帶 `upstream: "openrouter"`。共用的 `:free` 額度池（每帳號每日 1000 次，面板與 agent 流程共用）有保留量：
+讓該次請求回退。`DS_UPSTREAM=deepseek` 強制走官方 API。規則與 DS worker 用的金鑰 proxy（`~/.claude/bin/ds-keyproxy.py`）相同。
+由 OpenRouter 回答的結果帶 `upstream: "openrouter"`。共用的 `:free` 額度池（每帳號每日 1000 次，面板與 agent 流程共用）會保留一部分額度：
 設定 `OR_FREE_RESERVE=<n>` 後，`openrouter` 引擎在 `GET /api/v1/key` 回報剩餘 `<= n` 次時略過 `:free` 模型（每分鐘最多查一次；
 面板預設 0＝不查詢，429 時換下一個；agent 流程 50，託管測試 200）。
 
@@ -69,7 +69,7 @@
 開頭的 `<think>...</think>` 區塊會被移除。預設模型為 `deepseek-flash`（DeepSeek 一直讓它指向目前的 Flash 模型，
 已用 `GET /models` 確認；舊名 `deepseek-v4-flash` 仍可使用）。
 
-**僅限 flash。** 此引擎用於便宜的第二意見，因此拒絕任何非 Flash 模型。由於 DeepSeek 會不斷更改模型 ID，規則是樣式而非固定清單：
+**僅限 flash。** 此引擎用於便宜的第二意見，因此拒絕任何非 Flash 模型。DeepSeek 會一直改模型 ID，所以規則用樣式比對，不用固定清單：
 ID 含有 `flash` 字樣（`deepseek-flash`、`deepseek-v6-flash`、`v4.1flash`，大小寫不拘）且**不含** `pro` 或 `reasoner` 才會被接受
 （因此 `deepseek-v4-pro`、`deepseek-reasoner`、`deepseek-chat`、`deepseek-flash-pro` 都會被拒絕）。被拒絕的模型
 （來自 `dsapi:<model>`、`--dsapi-model` 或 `DSAPI_MODEL`）會以 `dsapi is limited to flash` 失敗，且不會送出任何請求。
@@ -168,4 +168,4 @@ NIM 經常新增模型，因此只要存在 NIM 金鑰，使用到 `nim` 的 con
 - `node consult-cli.js --refresh-nim-models` 在處理程序內執行受節流限制的檢查，不輸出任何內容，只寫入快取
   （背景的分離式更新與外部 hook 都是呼叫此旗標）。
 
-Grok 與其他模型已列入構想循環中，但尚未建立 bridge。本系統設計具備擴充引擎的能力 —— 每個引擎在 `lib/engines.js` 中僅需約 30 行程式碼。
+Grok 與其他模型已列入構想循環中，但尚未建立 bridge。這個系統很容易加新引擎 —— 每個引擎在 `lib/engines.js` 中只要約 30 行程式碼。

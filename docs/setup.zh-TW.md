@@ -9,7 +9,7 @@ cd ~/claude-bridges
 npm install
 ```
 
-在根目錄執行單次 `npm install` 即可供應所有伺服器 —— Node 會從各個 `index.js` 向上查找來解析 `node_modules`。
+在根目錄跑一次 `npm install`，所有伺服器就都能用 —— Node 會從各個 `index.js` 往上層目錄找 `node_modules`。
 
 ## 註冊（使用者範圍）
 

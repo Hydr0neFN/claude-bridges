@@ -14,7 +14,7 @@ node consult-cli.js --check-nim-models         # 立即強制執行 NIM 新模�
 node consult-cli.js --prompt-file review.txt   # 從檔案讀取 prompt（"-" 代表標準輸入），不可與 prompt 文字並用。適用於 diff 等長 prompt，避免超出作業系統的命令列長度上限
 node consult-cli.js --out-dir /tmp/c "prompt"   # 每個引擎完成時即寫入 <dir>/<engine>.md，全部完成後寫入 <dir>/_done（檔名中的 : 與 / 等不安全字元會改為 _）
 node consult-cli.js --debate spec.json --out-dir /tmp/d   # 結構化辯論（見下方「辯論模式」）；印出 <dir>/digest.md 與 TALLY 行
-node consult-cli.js --round2 /tmp/c     # 對已完成的 --out-dir 執行跑第二輪：有回答的引擎會看到彼此的答案（匿名），互相批評、可修改；寫入 /tmp/c/round2/，印出 dissent 區塊
+node consult-cli.js --round2 /tmp/c     # 對已完成的 --out-dir 跑第二輪：有回答的引擎會看到彼此的答案（匿名），互相批評、可修改；寫入 /tmp/c/round2/，印出 dissent 區塊
 node consult-cli.js --locks           # 列出目前生效的配額鎖
 node consult-cli.js --unlock codex    # 解除配額鎖（引擎名稱或 "all"）
 node consult-cli.js --ignore-locks "prompt"   # 照樣跑被鎖住的引擎，不寫入新的鎖
@@ -50,7 +50,7 @@ node consult-cli.js --update          # brew upgrade --cask <過期的 CLI>；gi
 - 缺少結尾區塊標為 `TAIL_MISSING`（其他引擎會看到該引擎最後約 120 字並加註），失敗的引擎標為 `ENGINE_FAILED: <reason>`；單一引擎失敗不會中止辯論。立場的 `fallback` 清單只重試一次，使用第一個尚未被使用的引擎，並標示為 `<fallback> (for <engine>)`。
 - `digest.md` 逐字收錄各引擎的結尾區塊與 FINAL PICK、檔案路徑與 `TALLY:` 行；`<dir>/_done` 最後寫入。Spec 錯誤時結束碼為 2。
 
-`consult-cli` 與 `consult-bridge` 啟動時會檢查（每 24 小時至多一次，快取於 `~/.cache/claude-bridges/updates.json`）引擎 CLI（brew 安裝的 cask 用 `brew outdated --cask --greedy`，否則用 `copilot version`）與本儲存庫（`git fetch` 後比對落後 commit 數）是否過期。頁尾取自上一次檢查的快取結果；快取過期時由分離的背景行程（CLI）或並行（MCP 伺服器）更新，因此不會拖慢或使諮詢失敗；僅在有過期項目時印出一行頁尾（MCP 伺服器則放在工具結果內）。未加 `--update` 不會安裝任何東西。
+`consult-cli` 與 `consult-bridge` 啟動時會檢查（每 24 小時至多一次，快取於 `~/.cache/claude-bridges/updates.json`）引擎 CLI（brew 安裝的 cask 用 `brew outdated --cask --greedy`，否則用 `copilot version`）與本儲存庫（`git fetch` 後比對落後 commit 數）是否過期。頁尾取自上一次檢查的快取結果；快取過期時由獨立的背景行程（CLI）或並行（MCP 伺服器）更新，所以不會拖慢諮詢，也不會害諮詢失敗；僅在有過期項目時印出一行頁尾（MCP 伺服器則放在工具結果內）。沒加 `--update` 就不會安裝任何東西。
 
 ## `consult-cli.js --json`
 

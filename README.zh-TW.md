@@ -37,7 +37,7 @@ flowchart TD
     style J fill:#718096,color:#a0aec0,stroke-dasharray: 5 5
 ```
 
-這不是「隨便問問 ChatGPT」。每個模型都有自己的角色、沙盒與審查關卡。
+這跟「隨便問問 ChatGPT」是兩回事。每個模型都有自己的角色、沙盒與審查關卡。
 
 小組成員就是 `CONSULT_ORDER` 裡的引擎（預設 `copilot,codex,deepseek,agy,nim,openrouter,opencode,azure,gemini`）。`mode: all`（預設）把同一個 prompt 平行送給全部引擎，每個成功的回答都會標上引擎名稱。`mode: first` 則是依序的備援鏈，第一個成功就停。某個引擎失敗會換下一個，過程會附在結果後面。
 
@@ -67,7 +67,7 @@ node consult-cli.js --mode all --order copilot,codex "prompt"
 npm test
 ```
 
-在根目錄跑一次 `npm install` 就供應所有伺服器 —— Node 會從各個 `index.js` 向上查找來解析 `node_modules`。
+在根目錄跑一次 `npm install`，所有伺服器就都能用 —— Node 會從各個 `index.js` 往上層目錄找 `node_modules`。
 
 - MCP 註冊、CLI 登入，以及 `nim` 需要的 `"timeout": 660000`：[docs/setup.zh-TW.md](docs/setup.zh-TW.md)。
 - 所有旗標、第二輪、配額鎖與辯論模式：[docs/consult-cli.zh-TW.md](docs/consult-cli.zh-TW.md)。
@@ -102,7 +102,7 @@ claude-bridges/
 
 - Grok 與其他模型在構想循環中，但還沒有 bridge。
 - `agy` 只在 Google AI Plus 配額還夠時列入預設順序（2026-10-27 起）。
-- `opencode` 的免費模型內容可能被供應商記錄或使用：只送非機密的 prompt。
+- 供應商可能會記錄或使用 `opencode` 免費模型的內容：只送非機密的 prompt。
 - NIM 免費試用須遵守 NVIDIA API Trial Terms（僅限評估、非正式環境用途）；額度以金鑰為單位，任何使用同一把金鑰的應用程式都共用。
 - NIM 的 `/v1/models` 也會列出這把金鑰不能呼叫的模型；卡在免費佇列的模型仍會在約 300 秒時失敗。
 - dsapi 每日 300 次請求的警告只是軟性提醒：不會擋任何請求。
