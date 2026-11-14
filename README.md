@@ -6,7 +6,17 @@ MCP servers that let Claude Code delegate to other coding CLIs — cross-model s
 
 Most people use AI to autocomplete or to ask one model one question. I use multiple models as a structured thinking system with checks and balances: debate, execute, review, cross-check, iterate.
 
-## The Thinking Loop
+## At a glance
+
+| | |
+|---|---|
+| Problem | One model gives one answer, with one set of blind spots. |
+| What I built | MCP servers that let Claude Code send the same prompt to other coding CLIs and hosted APIs — in parallel (`mode: all`) or as a fallback chain (`mode: first`). |
+| Result | Free OpenRouter models answered a small code-review prompt in 2-21 s on 2026-10-27. The NIM chain was picked from an eval the same day: ultra answered in 27-79 s, minimax-m3.1-flash in 93 s, super-vl in 57 s, all finding the planted bugs. |
+| Stack | Node.js; `@modelcontextprotocol/sdk` and `zod`. |
+| Status | Active. `agy` is in the default order while it drains its remaining quota (since 2026-10-27) and is removed once exhausted. |
+
+## How it works
 
 ```mermaid
 flowchart TD
@@ -27,194 +37,44 @@ flowchart TD
     style J fill:#718096,color:#a0aec0,stroke-dasharray: 5 5
 ```
 
-This isn't "ask ChatGPT." Each model has a role, a sandbox, and a review gate. No single model's output ships unchecked.
+This isn't "ask ChatGPT." Each model has a role, a sandbox, and a review gate.
 
-## What's Actually Wired
+The panel is the engines in `CONSULT_ORDER` (default `copilot,codex,deepseek,agy,nim,openrouter,opencode,azure,gemini`). In `mode: all` (the default) one prompt goes to all of them in parallel and every successful answer comes back labelled by engine. In `mode: first` they run as a sequential fallback chain and the first success wins. A failed engine fails over to the next, and the trail is appended to the result.
 
-The `consult` tool currently fans out to **five engines**:
+`deepseek`, `nim`, `openrouter` and `dsapi` get no cwd, shell or file access — they only ever see the prompt text, so their prompts must be self-contained.
 
-| Engine | Wraps | Tier |
-|---|---|---|
-| `copilot` | GitHub Copilot CLI (`copilot -p`) | Free (GitHub) |
-| `codex` | OpenAI Codex CLI (`codex exec`) | Free (ChatGPT) |
-| `agy` | Antigravity / Gemini CLI | Google AI Plus (low quota); **in the default order while it drains its remaining quota (2026-10-27); removed once exhausted** |
-| `deepseek` | `deeperseeker` proxy over a DeepSeek web account (HTTP, not a CLI) | Free (throwaway account) |
-| `nim` | NVIDIA NIM hosted API (HTTP, not a CLI) | Free trial tier; in the default order, with a 5-model fallback chain |
-| `openrouter` | OpenRouter free models (HTTP, not a CLI) | Free (rate-limited); in the default order (after `nim`), with a 5-model fallback chain |
-| `opencode` | Official OpenCode CLI (`opencode`, logged in to OpenCode Zen) on its free models | Free; in the default order (after `openrouter`), with a 5-model fallback chain (`OPENCODE_CHAIN` overrides, `--opencode-model M` starts it at M). Runs in an empty temp dir with the read-only `plan` agent, prompt on stdin. **Free models may be logged or used by the provider: send non-private prompts only.** |
-| `dsapi` | Official DeepSeek API, flash models only (HTTP, not a CLI) | Pay-per-token (cheap); **opt-in (not in default order)**, but also the automatic fallback of `deepseek` |
-| `gemini` | Google Gemini API (OpenAI-compatible endpoint, HTTP, not a CLI) | AI Studio free-tier key (`GEMINI_API_KEY` or `~/.gemini-api-key`); prompt-only; in the default order (last), and also the automatic fallback of `agy` |
-| `azure` | Azure OpenAI chat completions (HTTP, not a CLI) | Azure subscription key (`AZURE_OPENAI_KEY` or `~/.azure-openai-key`) plus endpoint (`AZURE_OPENAI_ENDPOINT` or `~/.azure-openai-endpoint`); in the default order (after `opencode`); one model, no chain; prompt-only |
+The full engine table, each fallback chain, and the per-engine timeouts are in [docs/engines.md](docs/engines.md).
 
-`agy` was opt-in because its Google AI Plus quota is small; since 2026-10-27 it is in the default order until that quota is used up (before: `--order copilot,codex,deepseek,agy`)
-or the MCP `order` argument, ideally once per review.
+## The engineering story
 
-`deepseek` is in the default `CONSULT_ORDER` (last, so in mode `first` it is only a fallback). It needs the
-`deeperseeker` proxy on `127.0.0.1:4000`; if the proxy is down or has no key, it falls back to the official API (`dsapi`, flash only, label `deepseek->dsapi`; see below), or fails soft
-if that has no key either, and the other engines still answer. `nim` is in the default order too (after `deepseek`, so the default panel is `copilot,codex,deepseek,agy,nim,openrouter,opencode,azure,gemini`); it walks a fallback chain, see below.
-`openrouter` is in the default order too (last; since 2026-10-27, so the default panel is `copilot,codex,deepseek,agy,nim,openrouter,opencode,azure,gemini`). Its default model (`baidu/ernie-5.5-flash-preview:free`) is a different family from `nim`'s, so the two count as separate voices. Drop it with an explicit `--order` (e.g. `--order copilot,codex,deepseek`).
-`dsapi` is opt-in as well (`--order copilot,codex,deepseek,dsapi`), and `deepseek` falls back to it on its own (see below).
-Unlike the CLI engines, `deepseek`, `nim`, `openrouter` and `dsapi` get no cwd, shell or file access — they only ever see the prompt text, so give them self-contained prompts.
+A single answer hides its own blind spots. The panel exists so that no single model's output ships unchecked.
 
-### `openrouter` (OpenRouter free models)
+A 2026-10-27 eval used a code-review prompt with planted bugs to pick the NIM chain. Ultra answered in 27-79 s, minimax-m3.1-flash in 93 s and super-vl in 57 s, and all three found the bugs. glm-5.3 (396 s), glm-5.3-flash (319 s) and step-5-preview (228 s) were too slow or too erratic for the first steps; `openai/gpt-oss-20b` answered in 5-10 s and closes the chain. The same day, the OpenRouter free models answered a small code-review prompt in 2-21 s.
 
-Set up the key once: put it in `~/.openrouter-key` (restrict it: `chmod 600` on macOS/Linux; on Windows
-`icacls <file> /inheritance:r /grant:r "%USERNAME%:(R,W)"`) or export `OPENROUTER_API_KEY`. The environment variable wins.
-No key means the engine is reported as `[failed] no key`; the other engines still answer.
+The cause of that spread is the free tier itself: models stall, vanish (HTTP 404, or 410 after end of life) or return reasoning only, and latency varies a lot run to run because the free queue is shared.
 
-Requests go to `https://openrouter.ai/api/v1/chat/completions` (`max_tokens` 1500).
-Free models are rate-limited, so a bare `openrouter` (and a model set by `--openrouter-model` / `OPENROUTER_MODEL`, or
-`openrouter:<that default>`) walks a fallback chain, starting with the requested model (5 attempts at most; override the list with
-`OPENROUTER_CHAIN=a/x:free,b/y:free`): `baidu/ernie-5.5-flash-preview:free` -> `dots-studio/dots-3-note-preview:free` -> `cohere/north-mini-code:free` ->
-`recursive/flint-v1.0:free` -> `liquid/lfm-3-1.7b:free`. It steps past 404, 410, 429, 5xx (also a 200 carrying such an error),
-a 400 "not a valid model ID" (delisted model), timeouts, network errors, empty answers and reasoning-only answers; any other error
-(401 bad key, 402 no credit, other 400) ends the chain at once. A leading `<think>...</think>` block is stripped. The result is labelled
-with the model that answered (`openrouter:<model>`); if every attempt fails, the failure lists each model and why (a 429 shows as
-`rate-limited`). An **explicit** `openrouter:<other model>` in the order runs only that model, with the whole timeout and no chain.
-Time budget: 60 s per attempt (`OPENROUTER_ATTEMPT_TIMEOUT_SEC`), whole chain within `OPENROUTER_TIMEOUT` (default 300 s = 5 x 60, maximum 600);
-a later step with less than 15 s left is skipped. The free models answered a small code-review prompt in 2-21 s on 2026-10-27.
-No model family appears in both this chain and the `nim` chain (a test enforces it), so the two engines are never the same voice. Left
-out: `thinkingmachines/inkling[-small]:free` (403, agentic harnesses only), `google/gemma-4-*:free` and `xingchen-agi/xing4.0-29b-a4b:free`
-(429 upstream on every call of the probe), the `nvidia/nemotron-*:free` models (same family as the `nim` chain).
-Model precedence: `openrouter:<model>` in the order, then `--openrouter-model`, then `OPENROUTER_MODEL`, then the default.
-Like `nim` and `deepseek`, it has no file access: the prompt must be self-contained.
+The fix is a fallback chain per free-tier engine, with a per-attempt timeout and a rule that a bare `nim` or `openrouter` may land on a different model. A test enforces that the OpenRouter and NIM chains share no model family, so the panel never counts one voice twice. A quota limit that names its own reset time becomes a lock, so the next run skips that engine until then.
 
-### `dsapi` (official DeepSeek API, flash only)
+What stays open: Grok and others are in the loop diagram but have no bridge yet, and `agy` leaves the default order once its Google AI Plus quota is used up.
 
-Set up the key once: put it in `~/.deepseek-api-key` (restrict it: `chmod 600` on macOS/Linux; on Windows
-`icacls <file> /inheritance:r /grant:r "%USERNAME%:(R,W)"`) or export `DEEPSEEK_API_KEY`. The environment variable wins;
-the file may hold anything around the key, the first `sk-...` token is used. No key means `[failed] no key`; the other engines still answer.
+The wider division of labour is in [docs/why.md](docs/why.md): Opus 4.6 holds the plan and the memory, Sonnet 5 writes the code with Opus 4.8 as advisor, and `consult` cross-checks before anything lands. Each delegation also carries a role prompt.
 
-**OpenRouter credit first (2026-10-28).** When an OpenRouter key exists (`OPENROUTER_API_KEY` or `~/.openrouter-key`), `dsapi`
-first calls `deepseek/deepseek-v4.1-flash` on OpenRouter (model pinned in code, request carries `provider.data_collection: "deny"`)
-and only then the official API. A 401/402/403 from OpenRouter (bad key, credit spent) is sticky for the rest of the process;
-a 429/5xx/network failure falls back for that one request. `DS_UPSTREAM=deepseek` forces the official API. Same rule as the
-key proxy of the DS worker (`~/.claude/bin/ds-keyproxy.py`). A result served by OpenRouter carries `upstream: "openrouter"`.
-The shared `:free` pool (1000 requests/day per account, panel and agent flows together) has a reserve: with `OR_FREE_RESERVE=<n>`
-the `openrouter` engine skips `:free` models once `GET /api/v1/key` reports `<= n` requests left (checked at most once a minute;
-the panel's own default is 0, i.e. no lookup, 429 steps the chain on; agent flows use 50, hosted test runs 200).
-
-Requests go to `https://api.deepseek.com/chat/completions` (OpenAI-compatible; `max_tokens` 1500, 90 s timeout, thinking mode off).
-One retry on HTTP 429 (honouring `Retry-After`, capped), 5xx, a timeout or a network error; none on 400/401/402/403.
-A leading `<think>...</think>` block is stripped. The default model is `deepseek-flash`, the id DeepSeek keeps pointed at its
-current Flash model (checked against `GET /models`; the legacy `deepseek-v4-flash` still works).
-
-**Flash only.** The engine is for cheap second opinions, so it refuses anything that is not a Flash model. Because DeepSeek
-renames model ids over time, the rule is a pattern, not a fixed list: an id is accepted when it contains a `flash` token
-(`deepseek-flash`, `deepseek-v6-flash`, `v4.1flash`, any casing) and does **not** contain `pro` or `reasoner`
-(so `deepseek-v4-pro`, `deepseek-reasoner`, `deepseek-chat` and `deepseek-flash-pro` are refused). A refused model
-(via `dsapi:<model>`, `--dsapi-model` or `DSAPI_MODEL`) fails with `dsapi is limited to flash` and no request is sent.
-Model precedence: `dsapi:<model>` in the order, then `--dsapi-model`, then `DSAPI_MODEL`, then the default.
-
-**Automatic fallback for `deepseek`.** When the `deeperseeker` proxy is unreachable (e.g. connection refused), has no key
-or answers HTTP 5xx, the `deepseek` engine retries the prompt on `dsapi` and the result is labelled `deepseek->dsapi`,
-so the default panel (`copilot,codex,deepseek`) keeps a DeepSeek voice while the proxy is down. A proxy that answers is
-used unchanged; a proxy 4xx or a per-call model (`deepseek:<model>`) does not trigger the fallback. If the fallback fails
-too, the failure lists both reasons. Listing both `deepseek` and `dsapi` in one order means two calls while the proxy is down.
-
-**Usage guard.** Every request and the token usage of the response (prompt + completion) are counted per local day in
-`~/.dsapi-usage.json` (`{"day","requests","promptTokens","completionTokens"}`). Past **300 requests/day** a one-line warning
-(`[consult] dsapi: N requests today ...`) is printed in the footer (stderr in the CLI, appended to the result in the MCP
-tool) for runs that can call dsapi. 300 is a soft alarm only: nothing is blocked, Flash is cheap.
-
-### `nim` (NVIDIA NIM)
-
-Set up the key once: put it in `~/.nvidia-nim-key` (restrict it: `chmod 600` on macOS/Linux; on
-Windows rely on your user-profile ACL) or export `NIM_API_KEY`. The environment variable wins.
-
-Order entries may be `engine` or `engine:model` (split on the first `:`, so model ids with `/` work).
-A model is accepted on `copilot`, `codex`, `nim`, `deepseek`, `openrouter` and `dsapi`; `agy:x` and unknown engines are dropped.
-(`copilot:<model>` is accepted syntactically, but auto-only Copilot plans reject `--model`; the engine then retries once on auto
-and labels the result `copilot (auto; <model> unavailable on this plan)`.) `nim:<default model>` is the same entry as bare `nim`
-and is deduplicated.
-This lets one panel query several NIM models, each labelled `nim:<model>`:
+## Build / run
 
 ```bash
-node consult-cli.js --order nim:moonshotai/kimi-k3,nim:z-ai/glm-5.3,codex "prompt"
+npm install
+node consult-cli.js --mode all --order copilot,codex "prompt"
+npm test
 ```
 
-Model precedence for `nim`: `engine:model` in the order, then `--nim-model`, then `NIM_MODEL`, then the built-in default.
+One `npm install` at the root serves all servers — Node resolves `node_modules` by walking up from each `index.js`.
 
-**Fallback chain.** Free-tier NIM models stall, vanish (HTTP 404, or 410 after end of life) or return reasoning only, so a bare `nim`
-(and a model set by `--nim-model` / `NIM_MODEL`, or `nim:<that default>`) walks a chain, starting with the requested model:
-`nvidia/nemotron-3-ultra-550b-a55b` -> `minimaxai/minimax-m3.1-flash` -> `nvidia/nemotron-3.5-super-vl-120b-a12b` -> `z-ai/glm-5.3-flash` -> `openai/gpt-oss-20b` (5 attempts at most;
-override the list with `NIM_CHAIN=a/x,b/y,c/z`). It steps past 404, 410, 5xx, 429 (after the usual single retry), timeouts, network errors,
-gateway errors, empty answers and reasoning-only answers; it stops on 400/401/402/403 and other 4xx (another model would fail the same way).
-The result is labelled with the model that answered (`nim:<model>`); if every attempt fails the reason lists each attempt, and if the only
-output was reasoning, the first reasoning-only reply is shown as a last resort. An **explicit** `nim:<other model>` in the order runs only
-that model, with the whole timeout and no chain, so single-model evaluations stay honest. Time budget: each attempt gets at most 120 s
-(`NIM_ATTEMPT_TIMEOUT_SEC`), and the whole chain stays within `NIM_TIMEOUT` (default and maximum 600 s, so 5 x 120 s); a later step with less than
-15 s left is skipped (the first step always runs). The chain was picked from an eval on 2026-10-27 (code-review prompt with planted bugs): ultra answered in 27-79 s,
-minimax-m3.1-flash in 93 s, super-vl in 57 s, all finding the bugs; glm-5.3 (396 s), glm-5.3-flash (319 s in that run, 10-15 s in later ones; it is the 4th step) and step-5-preview (228 s, 35-87 s later) were too
-slow or too erratic for the first steps (`openai/gpt-oss-20b` answered in 5-10 s and closes the chain), deepseek-v4.1-flash answered 504, kimi-k3 410 (end of life), kimi-k2.6 404, and nemotron-3.5-bolt-e4b answered weakly. Latency varies a lot run
-to run (the free queue is shared), which is why the chain mixes vendors.
-If a model returns only reasoning and no final answer, the section starts with `[reasoning only: ...]`;
-a `[truncated: hit max_tokens]` line marks cut-off answers (raise `NIM_MAX_TOKENS`); a truncated answer still counts as an answer.
-Only a reasoning-only reply is shown in `--mode all` but fails over in `--mode first`, where the chain moves on to the next engine
-(if every engine returns reasoning only, the first such reply is shown as a last resort with a note). Only a `<think>` block at the
-very start of a reply is treated as reasoning; tags quoted later in an answer are left alone.
+- MCP registration, the CLI logins, and the `"timeout": 660000` that `nim` needs: [docs/setup.md](docs/setup.md).
+- All flags, round 2, quota locks and debate mode: [docs/consult-cli.md](docs/consult-cli.md).
+- Environment variables and their defaults: [docs/configuration.md](docs/configuration.md).
+- `consult-cli.js --json` prints one `{ok,code,message,data}` object; the contract is in [docs/cli-json.md](docs/cli-json.md).
 
-Free trial keys allow roughly 40 requests per minute; NVIDIA does not publish the limits and they may change.
-Use is subject to the NVIDIA API Trial Terms (evaluation, non-production use). The budget is per key, so any
-other application using the same key shares it. On HTTP 429 consult waits (`Retry-After`, else 5 s, max 15 s),
-retries once, then reports the engine as rate limited.
-
-Free-tier latency varies a lot by model: in a smoke test the default `nvidia/nemotron-3-ultra-550b-a55b` answered a
-small review prompt in about 20 s, while some other models took 150 s or timed out at 180 s. NIM's `/v1/models` also lists
-models this key cannot call (HTTP 404 `Function ... Not found for account`), so try a model before relying on it.
-`nim` has its own timeout, independent of `CONSULT_TIMEOUT`: `NIM_TIMEOUT` seconds (default 600), always capped at 600
-(10 minutes; a larger value is clamped, an invalid one falls back to 600). Engines run in parallel, so a slow model only
-delays its own section. A 429 retry shares the same deadline.
-
-`nim` requests are streamed (SSE): consult accumulates the deltas (answer and reasoning) and builds the same result as a
-normal reply. Two limits sit at about 300 s: NVIDIA's gateway answers a real HTTP 504 (reported as
-`NVIDIA gateway timeout ...`, no retry) when a model has not started answering by then, and Node's `fetch` gives up after
-300 s without response headers or, mid-stream, without a data chunk (idle time between chunks, not total; reported as
-`no response headers within ~300 s` / `stream stalled, no data for ~300 s` instead of `fetch failed`). In short: time to
-first token must be at most about 300 s, and the whole stream may then run up to `NIM_TIMEOUT` (at most 600 s). Without
-streaming the entire answer would have to be finished within 300 s, so `NIM_TIMEOUT` above 300 only helps models that
-have started answering; a model stuck in the free-tier queue still fails at about 300 s. If the deadline hits mid-stream, the text received so far is returned with a
-`[truncated: timed out after Ns]` note (reasoning-only partials are shown as reasoning-only; nothing received is a plain
-timeout). A reply that is not `text/event-stream` is parsed as an ordinary completion. `deepseek` is not streamed. HTTP 504 means the
-gateway gave up waiting for the first token; HTTP 502 is reported as a plain `NVIDIA gateway error (HTTP 502)` with the
-response detail. Neither is retried.
-
-When consult runs as the MCP `consult-bridge`, its registration needs `"timeout": 660000` or more for `nim` to use the full
-10 minutes (the registration example below uses that value). In `--mode first` the engines run one after another, so a
-stalled `nim` (all three chain steps) holds up the chain for up to 600 s and `nim` plus a fallback can exceed 660 s: keep `nim` last in the order
-(it is last in the default), or use `--mode all` (parallel, the default).
-
-#### Bi-weekly new-model check
-
-NIM adds models often, so a consult run that uses `nim` (bare `nim` or `nim:<model>` in the order) checks
-`/v1/models` at most once every 14 days (`NIM_MODELS_CHECK_DAYS`), in a detached background process, whenever a
-NIM key exists. The cost is one `/v1/models` request every 14 days; no model is ever called. The first check only
-records a baseline. Later checks diff the listing against the ids seen before (embedding, guard, speech and
-similar non-chat ids are ignored). The result is one notice line until the next check (on stderr in
-`consult-cli`, appended to the tool result in `consult-bridge`), e.g.
-`[consult] NIM: 2 new models since 2026-10-10: a/b, c/d -> worth a look in a separate session; try --order nim:<id>`
-(at most 6 ids, then `(+K more)`). A listing is not proof that a model is callable for your key or fast enough
-on the free tier, so treat it as a hint.
-
-- Result cache: `~/.cache/claude-bridges/nim-models.json` (or `$CLAUDE_BRIDGES_CACHE_DIR/nim-models.json`), shape
-  `{checkedAt, attemptAt, baselineAt, seen, new: [ids], error}`; it never contains the key. `checkedAt` is the last
-  successful listing (unchanged by a failure), `attemptAt` the last attempt. A check is due when `checkedAt` is older than
-  the interval and `attemptAt` is older than one day, so a failing catalog is retried daily instead of waiting two weeks.
-- Notice throttle: the notice is shown at most 3 times, then stays silent for a day (a new check result starts over).
-  The state lives in `nim-notice.json` next to the cache, `{key, count, windowStart, cooldownUntil}` with
-  `key` = `<checkedAt>:<new ids joined by ,>`, and is written (atomically) only when the notice is actually printed
-  or appended. It is shared by every consumer, including external hooks that follow the same rule: if `key` differs,
-  start from zero; stay silent while `now < cooldownUntil`; if `now - windowStart >= 24 h` (or `now < windowStart`, a clock that moved back) reset `count` and set
-  `windowStart = now`; then `count += 1` and set `cooldownUntil = now + 24 h` once `count >= 3`. A missing or
-  corrupt file means "show"; throttle-file errors never break a consult run.
-- Both flags below work without `nim` in an order.
-- `node consult-cli.js --check-nim-models` forces a check now and prints the notice (or `no new models`).
-- `node consult-cli.js --refresh-nim-models` runs the throttled check in-process, silently, writing only the cache
-  (this is what the detached background refresh and external hooks call).
-
-Grok and others are in the aspirational loop but don't have bridges yet. The system is designed to add engines — each is ~30 lines in `lib/engines.js`.
-
-## Architecture
+## Repo layout
 
 ```
 claude-bridges/
@@ -236,194 +96,17 @@ claude-bridges/
   agy-bridge-vendored/    vendored copy of the agy-bridge (Gemini)
 ```
 
-Three MCP servers; `consult-bridge` is the one in active use, the other two are **legacy** (kept working, not registered by default):
+There are three MCP servers. `consult-bridge` is the one in active use; `copilot-bridge` and `codex-bridge` are **legacy** (kept working, not registered by default). Tool names, default postures and binary resolution are in [docs/bridges.md](docs/bridges.md).
 
-| Bridge | Tool | Default Posture |
-|---|---|---|
-| `copilot-bridge` | `copilot_exec` | Restrictive: no file writes, only read/search/git-gh shell auto-approved |
-| `codex-bridge` | `codex_exec` | Sandboxed `read-only` |
-| `consult-bridge` | `consult` | Aggregator: runs engines in parallel (`mode: all`) or sequential fallback (`mode: first`) |
+## Limits and open items
 
-All three resolve CLI binaries through `lib/common.js` (PATH plus `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin` on macOS/Linux; Windows AppData fallbacks only on Windows). `consult-bridge` and `consult-cli` build their own arguments in `lib/engines.js`. A missing CLI fails only its own engine, e.g. `copilot: not installed (looked in ...)`.
+- Grok and others are in the aspirational loop but do not have bridges yet.
+- `agy` is in the default order only while its Google AI Plus quota lasts (since 2026-10-27).
+- `opencode` free models may be logged or used by the provider: send non-private prompts only.
+- NIM free-trial use is subject to the NVIDIA API Trial Terms (evaluation, non-production use), and the budget is per key, so any other application using the same key shares it.
+- NIM's `/v1/models` also lists models the key cannot call, and a model stuck in the free-tier queue still fails at about 300 s.
+- The dsapi 300 requests/day warning is a soft alarm only: nothing is blocked.
 
-## Tools
+## License
 
-### `consult` (the star)
-
-Consult a panel of external models. Two modes:
-
-- **`all`** (default) — runs every engine in parallel, returns all successful answers labeled by engine. Use for cross-model second opinions where perspective diversity matters.
-- **`first`** — sequential fallback chain, first success wins. Cheaper, use for routine questions or tight quotas.
-
-```
-consult({
-  prompt: "Review this auth middleware for timing attacks",
-  mode: "all",           // "all" | "first"
-  order: ["copilot", "codex", "deepseek"]  // engine set/chain order
-})
-```
-
-Engine order configurable via `order` arg or `CONSULT_ORDER` env (default `copilot,codex,deepseek,agy,nim,openrouter,opencode,azure,gemini`); both accept `engine:model` entries (the MCP `order` is a list of strings; invalid entries are ignored and reported, and an order with no valid entry is an error). A failed engine (quota, auth, timeout, empty output, nonzero exit) fails over to the next; the trail is appended to the result.
-
-### `copilot_exec`
-
-Delegate to GitHub Copilot CLI, headless and non-interactive. Read-only by default — can read and search files under `cwd` but cannot modify them.
-
-### `codex_exec`
-
-Delegate to OpenAI Codex CLI via `codex exec`. Sandboxed read-only by default. Pass `sandbox: "workspace-write"` only when you actually intend Codex to edit files.
-
-## Command line and updates
-
-```bash
-node consult-cli.js --mode all --order copilot,codex "prompt"
-node consult-cli.js --copilot-model M --copilot-effort high --codex-model M --codex-effort low "prompt"
-node consult-cli.js --nim-model M "prompt"       # model for the nim engine (an order entry nim:M wins over this)
-node consult-cli.js --openrouter-model M "prompt" # model for the openrouter engine (an order entry openrouter:M wins over this)
-node consult-cli.js --dsapi-model M "prompt"    # model for the dsapi engine (flash ids only; an order entry dsapi:M wins over this)
-node consult-cli.js --check-nim-models         # force the NIM new-model check now
-node consult-cli.js --prompt-file review.txt   # prompt from a file ("-" = stdin); not combinable with prompt words. Use it for long prompts such as a diff, which can exceed the OS command-line limit
-node consult-cli.js --out-dir /tmp/c "prompt"   # also write <dir>/<engine>.md as each engine settles, <dir>/_done at the end (unsafe filename characters such as : and / become _)
-node consult-cli.js --debate spec.json --out-dir /tmp/d   # structured debate (see "Debate mode" below); prints <dir>/digest.md and a TALLY line
-node consult-cli.js --round2 /tmp/c     # round 2 of a finished --out-dir run: answering engines see each other's answers (anonymous), critique, may revise; writes /tmp/c/round2/, prints a dissent block
-node consult-cli.js --locks           # list active quota locks
-node consult-cli.js --unlock codex    # drop a quota lock (engine name or "all")
-node consult-cli.js --ignore-locks "prompt"   # run locked engines anyway, write no new locks
-node consult-cli.js --check-updates   # force a check now, print the result, exit
-node consult-cli.js --update          # brew upgrade --cask <outdated CLIs>; git pull --ff-only (refuses on a dirty repo)
-```
-
-In `--mode all`, `consult-cli` prints each engine's whole `## <engine>` section (answer or `[failed] reason`) the moment it settles, in completion order, then the `[consult] mode: all | ...` summary last. Per-engine timeouts are independent, so a slow engine never delays the others. `consult-bridge` returns one aggregated result but uses the same runner (`lib/panel.js`).
-
-### Round 2 on disagreement
-
-A `--mode all --out-dir D` run also saves the question as `D/_prompt.md`. When the round-1 answers conflict on a decision, `consult-cli --round2 D` asks every engine that answered (needs >= 2) a second time: it sees the question, its own answer and the other answers as `Panelist N`, critiques them, and ends with `REVISED:`, `POSITION:`, `DISSENT:` lines. Output goes to `D/round2/<engine>.md` (+ `_done`) and a dissent block is printed; the caller reports that dissent, not only its own verdict. Locked engines are skipped as in round 1. `--debate` already has its own R2/R3 for stance-based questions. Implementation: `lib/round2.js`, tests `test/round2.test.js`.
-
-### Quota locks
-
-When `copilot`, `codex` or `agy` fails with a recognised usage/quota limit, `consult-cli` writes a lock to `~/.claude/state/consult-locks.json` (env `CONSULT_LOCKS_FILE`; outside git) and skips that engine until `until`: `{engine: {until, reason, at}}`. The summary shows `skipped: <engine>: locked until <local time> (<reason>)` and `--mode first` steps past it. `until` is the engine's own reset time when given (Codex: "try again at Nov 16th, 2026 10:54 PM", read as local time), HTTP 429 with `Retry-After`, 00:00 UTC on the 1st of next month for monthly-credit exhaustion, else +24 h for other recognised limit text. A plain 429 or any unknown error never locks. Locks expire by themselves; `--unlock <engine|all>` removes one early; `--ignore-locks` runs locked engines and writes no locks (an explicit single `--order X` honours the lock without it). Implementation: `lib/locks.js`, tests `test/locks.test.js`.
-
-### Debate mode
-
-`consult-cli --debate <spec.json> --out-dir <dir>` runs a deterministic debate of up to three rounds and keeps the caller's context small: the full
-answers go to files, and the caller reads only `digest.md` (about 1.5k tokens for 5 engines). Spec:
-
-```json
-{ "question": "A or B?", "context": "optional inline text", "context_files": ["notes.md"],
-  "word_cap": 250, "rebuttal_cap": 150, "cross_cap": 100, "rounds": 3,
-  "stances": [ { "engine": "copilot", "stance": "argue for A" },
-               { "engine": "deepseek", "stance": "argue for B", "fallback": ["openrouter", "nim"] } ] }
-```
-
-- Prompts are self-contained (inline `context` plus `context_files`, 20 KB per file and 60 KB total, truncation marked), because deepseek, nim and openrouter have no file access. Every reply must end with a `CLAIMS` (max 3) / `CONCEDES` / `BOTTOM LINE` block.
-- Round 1: all stances run in parallel (`<dir>/r1/<engine>.md`, plus `.prompt.md`). Round 2 (`rounds: 2`): each engine that answered gets its stance plus the other engines' round-1 tail blocks (not their full text) and ends with `FINAL PICK: <option> - <reason>` (`<dir>/r2/`). Round 1 also ends with an opening `FINAL PICK`.
-- Anti-herding (rounds 2 and 3): opponents appear as `Debater N` (no engine names, no vote tally, no majority hint) and the prompt says agreement is not evidence. Each reply adds `CHANGED BECAUSE:` (which Debater's claim moved it, or `unchanged`) and `WOULD CHANGE MY MIND IF:`.
-- Round 3 (`rounds: 3`, default cap `cross_cap` 100 words) runs only when the R2 final picks still differ; each debater who gave a pick sees only the claims of debaters whose pick differs and answers just those (`<dir>/r3/`). Otherwise it is skipped and the digest says why. The digest also lists a per-engine pick trajectory such as `nim: D -> A -> A (R2 changed: Debater 2 claim 1)`; a pick that moved without a stated reason is flagged `NO REASON GIVEN`, and the TALLY uses each engine's latest pick. Borrowed ideas: independent first round and anonymised peers (Du et al. 2023; arXiv 2510.07517), critique-not-consensus prompting (Free-MAD, arXiv 2509.11035); papers also report plain majority voting matching debate, so the digest keeps the raw picks and trajectories rather than a judge verdict.
-- A missing tail is flagged `TAIL_MISSING` (the other engines then see that engine's last ~120 words, marked), a failed engine `ENGINE_FAILED: <reason>`; one failing engine never aborts the debate. A stance's `fallback` list is tried once, on the first engine not already used, and labelled `<fallback> (for <engine>)`.
-- `digest.md` holds each engine's tails and FINAL PICKs verbatim, the file paths and a `TALLY:` line; `<dir>/_done` is written last. Spec errors exit 2.
-
-On start, both `consult-cli` and `consult-bridge` check (at most once per 24h, cache in `~/.cache/claude-bridges/updates.json`) whether the engine CLIs (`brew outdated --cask --greedy` for brew-installed casks; `copilot version` otherwise) or this repo (`git fetch`, behind-count) are outdated. The footer comes from the previous check's cached result; a stale cache is refreshed by a detached background process (CLI) or concurrently (MCP server), so a consult is never delayed or failed. It prints one footer line only when something is outdated (in the tool result for the MCP server). Nothing is installed without `--update`.
-
-## Install
-
-```powershell
-cd ~/claude-bridges
-npm install
-```
-
-A single `npm install` at the root serves all servers — Node resolves `node_modules` by walking up from each `index.js`.
-
-## Register (user scope)
-
-```powershell
-claude mcp add-json copilot-bridge  '{"command":"node","args":["C:/Users/YOU/claude-bridges/copilot-bridge/index.js"],"timeout":600000}' -s user
-claude mcp add-json codex-bridge    '{"command":"node","args":["C:/Users/YOU/claude-bridges/codex-bridge/index.js"],"timeout":600000}' -s user
-claude mcp add-json consult-bridge  '{"command":"node","args":["C:/Users/YOU/claude-bridges/consult-bridge/index.js"],"timeout":660000}' -s user
-```
-
-Replace `C:/Users/YOU` with your actual home directory. All three CLIs must be authenticated first:
-
-```bash
-copilot login    # GitHub Copilot CLI
-codex login      # OpenAI Codex CLI
-# agy: see agy-bridge docs for Gemini auth
-```
-
-## Configuration (env vars)
-
-### Common
-
-| Variable | Default | Description |
-|---|---|---|
-| `*_TIMEOUT` | `600` | Per-engine timeout in seconds |
-| `*_MAX_OUTPUT_CHARS` | `50000` | Truncation cap for output |
-| `*_MODEL` | (engine default) | Override the model |
-| `*_BIN` | (auto-resolved) | Override the CLI executable path |
-
-Overrides for the consult panel: `COPILOT_BRIDGE_BIN`, `CODEX_BRIDGE_BIN`, `AGY_PATH`, `GROK_PATH`.
-
-### copilot-bridge
-
-| Variable | Default | Description |
-|---|---|---|
-| `COPILOT_BRIDGE_PERM_ARGS` | (restrictive defaults) | Replace permission flags wholesale. JSON array or whitespace-separated string. Deny rules always beat allow rules in Copilot. |
-
-### codex-bridge
-
-| Variable | Default | Description |
-|---|---|---|
-| `CODEX_BRIDGE_SANDBOX` | `read-only` | `read-only`, `workspace-write`, or `danger-full-access`. Also overridable per call via the `sandbox` argument. |
-
-### consult-bridge
-
-| Variable | Default | Description |
-|---|---|---|
-| `CONSULT_TIMEOUT` | `300` | Per-engine timeout in seconds (not used by `nim`, see `NIM_TIMEOUT`) |
-| `CONSULT_MAX_OUTPUT_CHARS` | `50000` | Total output truncation cap |
-| `CONSULT_PER_ENGINE_CHARS` | `20000` | Per-engine truncation in `all` mode |
-| `CONSULT_ORDER` | `copilot,codex,deepseek,agy,nim,openrouter,opencode,azure,gemini` | Default engine order |
-| `CONSULT_MODE` | `all` | Default mode (`all` or `first`) |
-| `COPILOT_MODEL` | (unset = auto) | Passed as `--model` only when set. If Copilot rejects it (auto-only plans such as Student), retried once on auto and labelled `copilot (auto; <model> unavailable on this plan)` |
-| `COPILOT_EFFORT` | (unset) | `--reasoning-effort none\|minimal\|low\|medium\|high\|xhigh\|max` |
-| `CODEX_MODEL` | (unset) | Passed as `-m` only when set |
-| `CODEX_EFFORT` | (unset) | Passed as `-c model_reasoning_effort="..."` |
-| `CLAUDE_BRIDGES_CACHE_DIR` | `~/.cache/claude-bridges` | Update-check cache location |
-| `DEEPSEEKER_BASE` | `http://127.0.0.1:4000` | deeperseeker proxy base URL |
-| `DEEPSEEKER_MODEL` | `v4.1flash` | Model id passed to the proxy |
-| `DEEPSEEKER_API_KEY` | (read from proxy `.env`) | Proxy API key; falls back to `DEEPSEEKER_ENV_PATH` |
-| `DEEPSEEKER_ENV_PATH` | `~/Claude/deeperseeker/.env` | Where to read the key from when the env var is unset |
-| `NIM_API_KEY` | (unset) | NVIDIA NIM key; takes precedence over the key file |
-| `NIM_KEY_PATH` | `~/.nvidia-nim-key` | Key file read when `NIM_API_KEY` is unset |
-| `NIM_MODEL` | `nvidia/nemotron-3-ultra-550b-a55b` | Default NIM model when neither the order entry nor `--nim-model` sets one (first step of the fallback chain) |
-| `NIM_CHAIN` | `nvidia/nemotron-3-ultra-550b-a55b,minimaxai/minimax-m3.1-flash,nvidia/nemotron-3.5-super-vl-120b-a12b,z-ai/glm-5.3-flash,openai/gpt-oss-20b` | Comma list of models the fallback chain walks after the requested one (5 attempts at most; each step 120 s at most, whole chain within `NIM_TIMEOUT`) |
-| `NIM_BASE` | `https://integrate.api.nvidia.com` | NIM API base URL |
-| `NIM_MAX_TOKENS` | `8192` | `max_tokens` sent to NIM |
-| `NIM_TIMEOUT` | `600` | NIM timeout in seconds (positive number); capped at 600, ignores `CONSULT_TIMEOUT`. MCP registrations need `"timeout": 660000` or more to use all of it |
-| `NIM_MODELS_CHECK_DAYS` | `14` | Interval of the NIM new-model check (positive number of days) |
-| `OPENROUTER_API_KEY` | (unset) | OpenRouter key; takes precedence over the key file |
-| `OPENROUTER_KEY_PATH` | `~/.openrouter-key` | Key file read when `OPENROUTER_API_KEY` is unset (the first `sk-or-...` token is used) |
-| `OPENROUTER_MODEL` | `baidu/ernie-5.5-flash-preview:free` | Default OpenRouter model when neither the order entry nor `--openrouter-model` sets one (first step of the fallback chain) |
-| `OPENROUTER_CHAIN` | `baidu/ernie-5.5-flash-preview:free,dots-studio/dots-3-note-preview:free,cohere/north-mini-code:free,recursive/flint-v1.0:free,liquid/lfm-3-1.7b:free` | Comma list of models the fallback chain walks after the requested one (5 attempts at most; each step 60 s at most, whole chain within `OPENROUTER_TIMEOUT`) |
-| `OPENROUTER_TIMEOUT` | `300` | Whole openrouter chain budget in seconds (positive number); capped at 600, ignores `CONSULT_TIMEOUT` |
-| `DEEPSEEK_API_KEY` | (unset) | Official DeepSeek API key for `dsapi`; takes precedence over the key file |
-| `DSAPI_KEY_PATH` | `~/.deepseek-api-key` | Key file read when `DEEPSEEK_API_KEY` is unset (the first `sk-...` token is used) |
-| `DSAPI_MODEL` | `deepseek-flash` | Default `dsapi` model when neither the order entry nor `--dsapi-model` sets one; must be a flash id (no `pro`/`reasoner`) |
-
-## Why This Exists
-
-I've been building things since junior high — first Arduino sketches, now PCBs and trading systems. AI is part of my toolkit and my learning loop: I think with Opus 4.6 (planner/debater by nature), execute with Sonnet 5 + Opus 4.8 (strict prompt-followers, built to ship), and cross-check across Gemini, Copilot, and Codex before anything lands.
-
-Each model has a job that matches how it was trained:
-
-- **Think** — Opus 4.6 @ claude.ai holds my personal memory, debates approaches, and stress-tests plans before I commit. Its training leans toward reasoning and nuance — exactly what planning needs.
-- **Execute** — Sonnet 5 writes the code; Opus 4.8 reviews as advisor. Both are trained for strict prompt-following and precise output — they ship, not philosophize.
-- **Cross-check** — `consult` fans out to Copilot, Codex, and Gemini in parallel. Different training data, different blind spots, independent verdicts. No single model gets the last word.
-- **Iterate** — everything feeds back to me. I synthesize, decide, and kick off the next cycle. The human stays in the loop at every gate.
-
-Beyond model selection, each delegation gets a **role prompt** — "As a Security auditor…", "As a Frontend engineer…", "As a Karpathy-style code reviewer…" — so the model responds from a specific expertise frame, not as a generic assistant. I maintain a full role table (20+ roles across engineering, product, content, and research) that maps each role to the right model tier and tool.
-
-The bridges are the plumbing that makes cross-checking programmatic — not manual copy-paste between chat windows.
-
-## `consult-cli.js --json`
-
-With `--json` (prompt, `--mode all|first` or `--debate`) stdout is exactly one `{ok,code,message,data}` object instead of the text sections, with a fixed exit-code map; see `docs/cli-json.md`. `data.engines[]` has per-engine `ok`, `code` (`OK`, `QUOTA_EXHAUSTED`, `AUTH_FAILED`, `TIMEOUT`, `NOT_INSTALLED`, `EMPTY_OUTPUT`, `CRASHED`, `ENGINE_ERROR`), `reason`, and `file` (with `--out-dir`) or `body`; `data.quota_exhausted` lists the engines that ran out of quota. Without `--json` nothing changes.
+MIT License. See [LICENSE](LICENSE).
