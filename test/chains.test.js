@@ -16,8 +16,8 @@ test("family(): vendor prefix and name stem", () => {
   assert.deepEqual(family("z-ai/glm-5.3-flash"), { vendor: "z-ai", stem: "glm" });
 });
 
-test("default chains: five models each, led by their engine default", () => {
-  assert.equal(NIM_CHAIN.length, 5);
+test("default chains: nim has 4 models and openrouter has 5, led by their engine default", () => {
+  assert.equal(NIM_CHAIN.length, 4);
   assert.equal(OPENROUTER_CHAIN.length, 5);
   assert.equal(NIM_CHAIN[0], DEFAULT_NIM_MODEL);
   assert.equal(OPENROUTER_CHAIN[0], "baidu/ernie-5.5-flash-preview:free");

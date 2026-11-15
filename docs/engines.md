@@ -10,7 +10,7 @@ The `consult` tool currently fans out to **five engines**:
 | `codex` | OpenAI Codex CLI (`codex exec`) | Free (ChatGPT) |
 | `agy` | Antigravity / Gemini CLI | Google AI Plus (low quota); **in the default order while it drains its remaining quota (2026-10-27); removed once exhausted** |
 | `deepseek` | `deeperseeker` proxy over a DeepSeek web account (HTTP, not a CLI) | Free (throwaway account) |
-| `nim` | NVIDIA NIM hosted API (HTTP, not a CLI) | Free trial tier; in the default order, with a 5-model fallback chain |
+| `nim` | NVIDIA NIM hosted API (HTTP, not a CLI) | Free trial tier; in the default order, with a 4-model fallback chain |
 | `openrouter` | OpenRouter free models (HTTP, not a CLI) | Free (rate-limited); in the default order (after `nim`), with a 5-model fallback chain |
 | `opencode` | Official OpenCode CLI (`opencode`, logged in to OpenCode Zen) on its free models | Free; in the default order (after `openrouter`), with a 5-model fallback chain (`OPENCODE_CHAIN` overrides, `--opencode-model M` starts it at M). Runs in an empty temp dir with the read-only `plan` agent, prompt on stdin. **Free models may be logged or used by the provider: send non-private prompts only.** |
 | `dsapi` | Official DeepSeek API, flash models only (HTTP, not a CLI) | Pay-per-token (cheap); **opt-in (not in default order)**, but also the automatic fallback of `deepseek` |
@@ -111,16 +111,16 @@ Model precedence for `nim`: `engine:model` in the order, then `--nim-model`, the
 
 **Fallback chain.** Free-tier NIM models stall, vanish (HTTP 404, or 410 after end of life) or return reasoning only, so a bare `nim`
 (and a model set by `--nim-model` / `NIM_MODEL`, or `nim:<that default>`) walks a chain, starting with the requested model:
-`nvidia/nemotron-3-ultra-550b-a55b` -> `minimaxai/minimax-m3.1-flash` -> `nvidia/nemotron-3.5-super-vl-120b-a12b` -> `z-ai/glm-5.3-flash` -> `openai/gpt-oss-20b` (5 attempts at most;
+`nvidia/nemotron-3-ultra-550b-a55b` -> `minimaxai/minimax-m3.1-flash` -> `nvidia/nemotron-3.5-super-vl-120b-a12b` -> `z-ai/glm-5.3-flash` (4 attempts at most;
 override the list with `NIM_CHAIN=a/x,b/y,c/z`). It steps past 404, 410, 5xx, 429 (after the usual single retry), timeouts, network errors,
 gateway errors, empty answers and reasoning-only answers; it stops on 400/401/402/403 and other 4xx (another model would fail the same way).
 The result is labelled with the model that answered (`nim:<model>`); if every attempt fails the reason lists each attempt, and if the only
 output was reasoning, the first reasoning-only reply is shown as a last resort. An **explicit** `nim:<other model>` in the order runs only
 that model, with the whole timeout and no chain, so single-model evaluations stay honest. Time budget: each attempt gets at most 120 s
-(`NIM_ATTEMPT_TIMEOUT_SEC`), and the whole chain stays within `NIM_TIMEOUT` (default and maximum 600 s, so 5 x 120 s); a later step with less than
+(`NIM_ATTEMPT_TIMEOUT_SEC`), and the whole chain stays within `NIM_TIMEOUT` (default and maximum 600 s; 4 x 120 s = 480 s fits under the cap); a later step with less than
 15 s left is skipped (the first step always runs). The chain was picked from an eval on 2026-10-27 (code-review prompt with planted bugs): ultra answered in 27-79 s,
-minimax-m3.1-flash in 93 s, super-vl in 57 s, all finding the bugs; glm-5.3 (396 s), glm-5.3-flash (319 s in that run, 10-15 s in later ones; it is the 4th step) and step-5-preview (228 s, 35-87 s later) were too
-slow or too erratic for the first steps (`openai/gpt-oss-20b` answered in 5-10 s and closes the chain), deepseek-v4.1-flash answered 504, kimi-k3 410 (end of life), kimi-k2.6 404, and nemotron-3.5-bolt-e4b answered weakly. Latency varies a lot run
+minimax-m3.1-flash in 93 s, super-vl in 57 s, all finding the bugs; glm-5.3 (396 s), glm-5.3-flash (319 s in that run, 10-15 s in later ones; it now closes the 4-model chain) and step-5-preview (228 s, 35-87 s later) were too
+slow or too erratic for the first steps (`openai/gpt-oss-20b` was removed so OpenAI stays exclusive to `azure`), deepseek-v4.1-flash answered 504, kimi-k3 410 (end of life), kimi-k2.6 404, and nemotron-3.5-bolt-e4b answered weakly. Latency varies a lot run
 to run (the free queue is shared), which is why the chain mixes vendors.
 If a model returns only reasoning and no final answer, the section starts with `[reasoning only: ...]`;
 a `[truncated: hit max_tokens]` line marks cut-off answers (raise `NIM_MAX_TOKENS`); a truncated answer still counts as an answer.

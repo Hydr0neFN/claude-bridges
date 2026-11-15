@@ -603,19 +603,19 @@ test("nim stream: a cut-off stream with only reasoning keeps the truncation note
 });
 
 // ---- fallback chain ----
-const [C1, C2, C3, C4, C5] = NIM_CHAIN;
+const [C1, C2, C3, C4] = NIM_CHAIN;
 const chainEnv = { NIM_API_KEY: FAKE_KEY }; // no NIM_CHAIN: the built-in chain
 const ok200 = (text) => () => jsonRes(reply({ content: text }));
 const status = (code, body = "x") => () => new Response(body, { status: code });
 const calledModels = (f) => f.calls.map((c) => c.body.model);
 
-test("nim chain: built-in chain is 5 distinct models led by the default", () => {
-  assert.equal(NIM_CHAIN.length, 5);
-  assert.equal(new Set(NIM_CHAIN).size, 5);
+test("nim chain: built-in chain is 4 distinct models led by the default", () => {
+  assert.equal(NIM_CHAIN.length, 4);
+  assert.equal(new Set(NIM_CHAIN).size, 4);
   assert.equal(C1, DEFAULT_NIM_MODEL);
   assert.deepEqual(nimModels(C1), NIM_CHAIN);
-  assert.deepEqual(nimModels(C3), [C3, C1, C2, C4, C5]);
-  assert.deepEqual(nimModels("other/m"), ["other/m", C1, C2, C3, C4]); // at most 5
+  assert.deepEqual(nimModels(C3), [C3, C1, C2, C4]);
+  assert.deepEqual(nimModels("other/m"), ["other/m", C1, C2, C3]); // at most 4
 });
 
 test("nim chain: NIM_CHAIN env overrides the list; blanks ignored", () => {
@@ -674,7 +674,7 @@ test("nim chain: reasoning-only everywhere -> the first reasoning-only reply as 
     () => jsonRes(reply({ content: "", reasoning_content: "other thoughts" })),
   ]);
   const r = await ENGINES.nim({ prompt: "p", env: chainEnv, fetchImpl: f, sleep: sleeper() });
-  assert.equal(f.calls.length, 5); // the last reply repeats for the 4th and 5th model
+  assert.equal(f.calls.length, 4); // the last reply repeats for the 4th model
   assert.equal(r.ok, true);
   assert.equal(r.degraded, true);
   assert.equal(r.engine, `nim:${C1}`);
@@ -728,7 +728,7 @@ test("nim chain: a flag/env model (not explicit) starts the chain; NIM_MODEL is 
   assert.equal(h.calls.length, 2);
 });
 
-test("nim chain budget: 120 s per attempt, five steps fill the 600 s NIM timeout", async () => {
+test("nim chain budget: 120 s per attempt, four steps fit within the 600 s NIM timeout", async () => {
   assert.equal(NIM_ATTEMPT_TIMEOUT_SEC, 120);
   const realNow = Date.now;
   let t = realNow();
@@ -736,9 +736,9 @@ test("nim chain budget: 120 s per attempt, five steps fill the 600 s NIM timeout
   try {
     const f = async (url, init) => { f.calls.push(JSON.parse(init.body).model); t += 120_000; return new Response("x", { status: 500 }); };
     f.calls = [];
-    // 600 s: all five attempts fit.
+    // 600 s: all four attempts fit (480 s).
     await ENGINES.nim({ prompt: "p", timeoutSec: 600, env: chainEnv, fetchImpl: f, sleep: sleeper() });
-    assert.equal(f.calls.length, 5);
+    assert.equal(f.calls.length, 4);
     // 250 s: 120 + 120 used, only 10 s left (< 15 s minimum) -> the third is skipped and said so.
     f.calls = [];
     t = realNow();

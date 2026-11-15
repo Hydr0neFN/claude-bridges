@@ -49,7 +49,7 @@ The full engine table, each fallback chain, and the per-engine timeouts are in [
 
 A single answer hides its own blind spots. The panel exists so that no single model's output ships unchecked.
 
-A 2026-10-27 eval used a code-review prompt with planted bugs to pick the NIM chain. Ultra answered in 27-79 s, minimax-m3.1-flash in 93 s and super-vl in 57 s, and all three found the bugs. glm-5.3 (396 s), glm-5.3-flash (319 s) and step-5-preview (228 s) were too slow or too erratic for the first steps; `openai/gpt-oss-20b` answered in 5-10 s and closes the chain. The same day, the OpenRouter free models answered a small code-review prompt in 2-21 s.
+A 2026-10-27 eval used a code-review prompt with planted bugs to pick the NIM chain. Ultra answered in 27-79 s, minimax-m3.1-flash in 93 s and super-vl in 57 s, and all three found the bugs. glm-5.3 (396 s), glm-5.3-flash (319 s) and step-5-preview (228 s) were too slow or too erratic for the first steps; `z-ai/glm-5.3-flash` now closes the 4-model chain (`openai/gpt-oss-20b` left the chain because `azure` carries the OpenAI family). The same day, the OpenRouter free models answered a small code-review prompt in 2-21 s.
 
 The cause of that spread is the free tier itself: models stall, vanish (HTTP 404, or 410 after end of life) or return reasoning only, and latency varies a lot run to run because the free queue is shared.
 

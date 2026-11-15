@@ -46,7 +46,7 @@ Overrides for the consult panel: `COPILOT_BRIDGE_BIN`, `CODEX_BRIDGE_BIN`, `AGY_
 | `NIM_API_KEY` | (unset) | NVIDIA NIM key; takes precedence over the key file |
 | `NIM_KEY_PATH` | `~/.nvidia-nim-key` | Key file read when `NIM_API_KEY` is unset |
 | `NIM_MODEL` | `nvidia/nemotron-3-ultra-550b-a55b` | Default NIM model when neither the order entry nor `--nim-model` sets one (first step of the fallback chain) |
-| `NIM_CHAIN` | `nvidia/nemotron-3-ultra-550b-a55b,minimaxai/minimax-m3.1-flash,nvidia/nemotron-3.5-super-vl-120b-a12b,z-ai/glm-5.3-flash,openai/gpt-oss-20b` | Comma list of models the fallback chain walks after the requested one (5 attempts at most; each step 120 s at most, whole chain within `NIM_TIMEOUT`) |
+| `NIM_CHAIN` | `nvidia/nemotron-3-ultra-550b-a55b,minimaxai/minimax-m3.1-flash,nvidia/nemotron-3.5-super-vl-120b-a12b,z-ai/glm-5.3-flash` | Comma list of models the fallback chain walks after the requested one (4 attempts at most; each step 120 s at most, whole chain within `NIM_TIMEOUT`) |
 | `NIM_BASE` | `https://integrate.api.nvidia.com` | NIM API base URL |
 | `NIM_MAX_TOKENS` | `8192` | `max_tokens` sent to NIM |
 | `NIM_TIMEOUT` | `600` | NIM timeout in seconds (positive number); capped at 600, ignores `CONSULT_TIMEOUT`. MCP registrations need `"timeout": 660000` or more to use all of it |

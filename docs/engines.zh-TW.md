@@ -10,7 +10,7 @@
 | `codex` | OpenAI Codex CLI (`codex exec`) | Free (ChatGPT) |
 | `agy` | Antigravity / Gemini CLI | Google AI Plus（配額少）；**2026-10-27 起列入預設順序，直到剩餘配額用完為止** |
 | `deepseek` | 以 `deeperseeker` proxy 代理 DeepSeek 網頁帳號（HTTP，非 CLI） | Free（拋棄式帳號） |
-| `nim` | NVIDIA NIM 託管 API（HTTP，非 CLI） | Free 試用方案；列入預設順序，帶 5 個模型的備援鏈 |
+| `nim` | NVIDIA NIM 託管 API（HTTP，非 CLI） | Free 試用方案；列入預設順序，帶 4 個模型的備援鏈 |
 | `openrouter` | OpenRouter 免費模型（HTTP，非 CLI） | Free（有速率限制）；列入預設順序（在 `nim` 之後），並帶有 5 個模型的備援鏈 |
 | `opencode` | 官方 OpenCode CLI（`opencode`，已登入 OpenCode Zen），使用其免費模型 | Free；列入預設順序（在 `openrouter` 之後），帶有 5 個模型的備援鏈（`OPENCODE_CHAIN` 可覆寫，`--opencode-model M` 從 M 開始）。在空的暫存目錄以唯讀的 `plan` agent 執行，prompt 走 stdin。**供應商可能會記錄或使用免費模型的內容：只送非機密的 prompt。** |
 | `dsapi` | DeepSeek 官方 API，僅限 flash 模型（HTTP，非 CLI） | 按量計費（便宜）；**選用（不在預設順序中）**，但同時是 `deepseek` 的自動備援 |
@@ -22,7 +22,7 @@
 
 `deepseek` 已列入預設的 `CONSULT_ORDER`（排在最後，因此在 `first` 模式下僅作為備援）。它需要 `deeperseeker` proxy
 在 `127.0.0.1:4000` 運作；若 proxy 未啟動或沒有金鑰，會自動改走官方 API（`dsapi`，僅限 flash，標示 `deepseek->dsapi`，見下），若也沒有金鑰則軟性失敗，其他引擎仍會照常回答。
-`nim` 也已列入預設順序（在 `deepseek` 之後，預設為 `copilot,codex,deepseek,agy,nim,openrouter,opencode,azure,gemini`），並帶有 5 個模型的備援鏈（`nvidia/nemotron-3-ultra-550b-a55b` -> `minimaxai/minimax-m3.1-flash` -> `nvidia/nemotron-3.5-super-vl-120b-a12b` -> `z-ai/glm-5.3-flash` -> `openai/gpt-oss-20b`，可用 `NIM_CHAIN` 覆寫；每步最多 120 秒，整條鏈受 `NIM_TIMEOUT` 限制，上限 600 秒）；明確寫 `nim:<其他模型>` 時只跑該模型、不走備援鏈。`openrouter` 自 2026-10-27 起同樣列入預設順序，預設模型 `baidu/ernie-5.5-flash-preview:free` 與 `nim` 不同家族（兩條備援鏈的模型家族完全不重疊，由測試保證），兩者算作獨立的聲音；要排除它請明確指定 `--order`（例如 `--order copilot,codex,deepseek`）。`dsapi` 也是選用制（`--order copilot,codex,deepseek,dsapi`），且 `deepseek` 會自動備援到它（見下）。
+`nim` 也已列入預設順序（在 `deepseek` 之後，預設為 `copilot,codex,deepseek,agy,nim,openrouter,opencode,azure,gemini`），並帶有 4 個模型的備援鏈（`nvidia/nemotron-3-ultra-550b-a55b` -> `minimaxai/minimax-m3.1-flash` -> `nvidia/nemotron-3.5-super-vl-120b-a12b` -> `z-ai/glm-5.3-flash`，可用 `NIM_CHAIN` 覆寫；每步最多 120 秒，整條鏈受 `NIM_TIMEOUT` 限制，上限 600 秒）；明確寫 `nim:<其他模型>` 時只跑該模型、不走備援鏈。`openrouter` 自 2026-10-27 起同樣列入預設順序，預設模型 `baidu/ernie-5.5-flash-preview:free` 與 `nim` 不同家族（兩條備援鏈的模型家族完全不重疊，由測試保證），兩者算作獨立的聲音；要排除它請明確指定 `--order`（例如 `--order copilot,codex,deepseek`）。`dsapi` 也是選用制（`--order copilot,codex,deepseek,dsapi`），且 `deepseek` 會自動備援到它（見下）。
 與其他 CLI 引擎不同，`deepseek`、`nim`、`openrouter` 與 `dsapi` 沒有 cwd、shell 或檔案存取權限 ——
 只看得到 prompt 文字本身，因此送給它們的 prompt 必須自帶完整脈絡。
 
@@ -104,15 +104,15 @@ node consult-cli.js --order nim:moonshotai/kimi-k3,nim:z-ai/glm-5.3,codex "promp
 
 **備援鏈。** 免費方案的 NIM 模型會卡住、消失（HTTP 404，或終止支援後回 410），或只回推理過程，因此裸 `nim`
 （以及由 `--nim-model` / `NIM_MODEL` 指定的模型，或 `nim:<該預設模型>`）會依鏈往下試，由指定的模型開始：
-`nvidia/nemotron-3-ultra-550b-a55b` -> `minimaxai/minimax-m3.1-flash` -> `nvidia/nemotron-3.5-super-vl-120b-a12b` -> `z-ai/glm-5.3-flash` -> `openai/gpt-oss-20b`（最多 5 次；
+`nvidia/nemotron-3-ultra-550b-a55b` -> `minimaxai/minimax-m3.1-flash` -> `nvidia/nemotron-3.5-super-vl-120b-a12b` -> `z-ai/glm-5.3-flash`（最多 4 次；
 可用 `NIM_CHAIN=a/x,b/y,c/z` 覆寫）。遇到 404、410、5xx、429（先照常重試一次）、逾時、網路錯誤、閘道錯誤、空回覆或只含推理過程的回覆時換下一個；
 400/401/402/403 與其他 4xx 則直接停止（換模型也會得到同樣的錯）。
 結果會標示為實際回答的模型（`nim:<model>`）；若全部失敗，原因會列出每一次嘗試；若唯一有內容的是推理過程，則以第一個僅推理的回覆作為最後手段顯示。
 順序中**明確**寫 `nim:<其他模型>` 時只跑該模型，使用整段逾時、不走備援鏈，單一模型的評測才不會失真。時間預算：每步最多 120 秒
-（`NIM_ATTEMPT_TIMEOUT_SEC`），整條鏈受 `NIM_TIMEOUT` 限制（預設與上限都是 600 秒，即 5 x 120 秒）；剩餘不足 15 秒的後續步驟會被略過（第一步一定會跑）。
+（`NIM_ATTEMPT_TIMEOUT_SEC`），整條鏈受 `NIM_TIMEOUT` 限制（預設與上限都是 600 秒；4 x 120 秒 = 480 秒，不超過上限）；剩餘不足 15 秒的後續步驟會被略過（第一步一定會跑）。
 這條鏈是 2026-10-27 用一份夾帶故意錯誤的 code review 提示測出來的：ultra 以 27-79 秒回答、minimax-m3.1-flash 93 秒、super-vl 57 秒，三者都找到那些錯誤；
-glm-5.3（396 秒）、glm-5.3-flash（該次 319 秒，之後幾次 10-15 秒；它是第 4 步）與 step-5-preview（228 秒，之後 35-87 秒）不是太慢就是太不穩，放不進前幾步
-（`openai/gpt-oss-20b` 以 5-10 秒回答，收在鏈尾），deepseek-v4.1-flash 回 504、kimi-k3 回 410（終止支援）、kimi-k2.6 回 404，nemotron-3.5-bolt-e4b 答得很弱。延遲每次差很多
+glm-5.3（396 秒）、glm-5.3-flash（該次 319 秒，之後幾次 10-15 秒；現收在這條 4 模型鏈的鏈尾）與 step-5-preview（228 秒，之後 35-87 秒）不是太慢就是太不穩，放不進前幾步
+（因 OpenAI 家族已由 `azure` 擔任，`openai/gpt-oss-20b` 已移出此鏈），deepseek-v4.1-flash 回 504、kimi-k3 回 410（終止支援）、kimi-k2.6 回 404，nemotron-3.5-bolt-e4b 答得很弱。延遲每次差很多
 （免費佇列是共用的），所以鏈上混用不同廠牌。
 若模型只回推理過程而沒有最終答案，該段會以 `[reasoning only: ...]` 開頭；
 回答被截斷時會附上 `[truncated: hit max_tokens]`（可調高 `NIM_MAX_TOKENS`），被截斷的回答仍視為有效回答。

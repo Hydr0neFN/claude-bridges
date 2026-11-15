@@ -46,7 +46,7 @@ consult 小組的覆寫變數：`COPILOT_BRIDGE_BIN`、`CODEX_BRIDGE_BIN`、`AGY
 | `NIM_API_KEY` | （未設定） | NVIDIA NIM 金鑰，優先於金鑰檔案 |
 | `NIM_KEY_PATH` | `~/.nvidia-nim-key` | 未設 `NIM_API_KEY` 時讀取的金鑰檔案 |
 | `NIM_MODEL` | `nvidia/nemotron-3-ultra-550b-a55b` | 順序項目與 `--nim-model` 都未指定時的預設 NIM 模型（備援鏈第一步） |
-| `NIM_CHAIN` | `nvidia/nemotron-3-ultra-550b-a55b,minimaxai/minimax-m3.1-flash,nvidia/nemotron-3.5-super-vl-120b-a12b,z-ai/glm-5.3-flash,openai/gpt-oss-20b` | 備援鏈在指定模型之後依序嘗試的模型（逗號分隔；最多 5 次，每步最多 120 秒，整條鏈受 `NIM_TIMEOUT` 限制） |
+| `NIM_CHAIN` | `nvidia/nemotron-3-ultra-550b-a55b,minimaxai/minimax-m3.1-flash,nvidia/nemotron-3.5-super-vl-120b-a12b,z-ai/glm-5.3-flash` | 備援鏈在指定模型之後依序嘗試的模型（逗號分隔；最多 4 次，每步最多 120 秒，整條鏈受 `NIM_TIMEOUT` 限制） |
 | `NIM_BASE` | `https://integrate.api.nvidia.com` | NIM API 基底 URL |
 | `NIM_MAX_TOKENS` | `8192` | 傳給 NIM 的 `max_tokens` |
 | `NIM_TIMEOUT` | `600` | NIM 逾時時間（正數，單位為秒），上限 600，不受 `CONSULT_TIMEOUT` 影響。MCP 註冊需設定 `"timeout": 660000` 或更大才能用滿 |

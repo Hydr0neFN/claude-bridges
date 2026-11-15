@@ -49,7 +49,7 @@ flowchart TD
 
 一個答案看不見自己的盲點。這個小組存在的目的，就是讓任何單一模型的輸出都不會沒檢查就交出去。
 
-2026-10-27 的評測用一份故意埋了錯誤的 code review 提示來挑 NIM 備援鏈。ultra 以 27-79 秒回答、minimax-m3.1-flash 93 秒、super-vl 57 秒，三者都把那些錯誤找了出來。glm-5.3（396 秒）、glm-5.3-flash（319 秒）與 step-5-preview（228 秒）不是太慢就是太不穩，放不進前幾步；`openai/gpt-oss-20b` 以 5-10 秒回答，收在鏈尾。同一天，OpenRouter 免費模型回答一個小型 code review 提示約 2-21 秒。
+2026-10-27 的評測用一份故意埋了錯誤的 code review 提示來挑 NIM 備援鏈。ultra 以 27-79 秒回答、minimax-m3.1-flash 93 秒、super-vl 57 秒，三者都把那些錯誤找了出來。glm-5.3（396 秒）、glm-5.3-flash（319 秒）與 step-5-preview（228 秒）不是太慢就是太不穩，放不進前幾步；現由 `z-ai/glm-5.3-flash` 收在這條 4 模型鏈的鏈尾（因 OpenAI 家族已由 `azure` 擔任，`openai/gpt-oss-20b` 已移出此鏈）。同一天，OpenRouter 免費模型回答一個小型 code review 提示約 2-21 秒。
 
 會有這種落差，是因為免費方案本身不穩：模型會卡住、消失（HTTP 404，或終止支援後回 410），或只回推理過程；而且免費佇列是共用的，延遲每次差很多。
 
