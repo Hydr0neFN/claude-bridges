@@ -265,13 +265,18 @@ test("footer command is an absolute path", () => {
 });
 
 test("agyArgs passes a short prompt inline", () => {
-  const a = agyArgs({ prompt: "hi", cwd: "/w", timeoutSec: 30 });
+  const a = agyArgs({ prompt: "hi", cwd: "/w", timeoutSec: 30, model: "" });
   assert.deepEqual(a, ["--dangerously-skip-permissions", "--add-dir", "/w", "--print-timeout", "30s", "-p", "hi"]);
+});
+
+test("agyArgs puts the panel model first", () => {
+  const a = agyArgs({ prompt: "hi", cwd: "/w", timeoutSec: 30, model: "gemini-4-argon-high" });
+  assert.deepEqual(a.slice(0, 3), ["--model", "gemini-4-argon-high", "--dangerously-skip-permissions"]);
 });
 
 test("agyArgs points a long prompt at its file and allows that dir", () => {
   const file = path.join(os.tmpdir(), "consult-agy-x.md");
-  const a = agyArgs({ prompt: "x".repeat(ARGV_PROMPT_MAX + 1), cwd: "/w", timeoutSec: 30, promptFile: file });
+  const a = agyArgs({ prompt: "x".repeat(ARGV_PROMPT_MAX + 1), cwd: "/w", timeoutSec: 30, promptFile: file, model: "" });
   assert.deepEqual(a.slice(3, 5), ["--add-dir", path.dirname(file)]);
   assert.ok(a.at(-1).includes(file));
   assert.ok(a.at(-1).length < 400);
