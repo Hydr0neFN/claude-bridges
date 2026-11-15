@@ -122,3 +122,23 @@ test("parseArgs: --unlock, --ignore-locks, --locks", () => {
   assert.equal(parseArgs([]).unlock, null);
   assert.equal(parseArgs([]).ignoreLocks, false);
 });
+
+test("model locks: recordLock supports engine:model, activeLocks lists them, unlock('agy') clears engine and model locks", () => {
+  const file = tmpFile();
+  assert.equal(recordLock("nim:x", "usage limit reached", { file, now: NOW }), null, "non-lockable engine:model rejected");
+  assert.equal(recordLock("agy:", "usage limit reached", { file, now: NOW }), null, "empty model rejected");
+  const a = recordLock("agy:gemini-4-argon-high", "exit 1: Quota exceeded for model", { file, now: NOW });
+  const h = recordLock("agy:gemini-4-hydrogen-high", "exit 1: Quota exceeded for model", { file, now: NOW });
+  const e = recordLock("agy", "exit 1: Quota exceeded for model", { file, now: NOW });
+  const c = recordLock("codex", CODEX, { file, now: NOW });
+  assert.ok(a && h && e && c);
+  assert.deepEqual(Object.keys(activeLocks(file, NOW)).sort(), ["agy", "agy:gemini-4-argon-high", "agy:gemini-4-hydrogen-high", "codex"]);
+
+  // Unlocking a specific model leaves the rest intact.
+  assert.deepEqual(unlock("agy:gemini-4-hydrogen-high", { file }), ["agy:gemini-4-hydrogen-high"]);
+  assert.deepEqual(Object.keys(activeLocks(file, NOW)).sort(), ["agy", "agy:gemini-4-argon-high", "codex"]);
+
+  // Unlocking bare engine "agy" clears both the engine lock and all remaining agy:* model locks.
+  assert.deepEqual(unlock("agy", { file }).sort(), ["agy", "agy:gemini-4-argon-high"]);
+  assert.deepEqual(Object.keys(readLocks(file)), ["codex"]);
+});

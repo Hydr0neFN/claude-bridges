@@ -19,6 +19,7 @@ The `consult` tool currently fans out to **five engines**:
 
 `agy` was opt-in because its Google AI Plus quota is small; since 2026-10-27 it is in the default order until that quota is used up (before: opt in with `--order copilot,codex,deepseek,agy`)
 or the MCP `order` argument, ideally once per review.
+Its primary model is `AGY_CONSULT_MODEL` (default `gemini-4-argon-high`, weekly quota) with `AGY_FALLBACK_MODEL` (default `gemini-4-hydrogen-high`, separate 5-hour quota; `""` disables fallback). On a usage/quota limit, `agy` locks the primary model (`agy:<primary>`) and runs the fallback once in the same call with the remaining time budget (skipping the primary while its model lock is live); non-quota failures (timeout, crash, auth) do not fall back. Only when the fallback also hits a usage/quota limit does the engine-level `agy` lock apply (locking `agy:<fallback>` too). Results are labelled `agy:<model that answered>`, with a `fallback: argon quota-locked until <time>` note when the fallback answered; `--locks` lists model locks and `--unlock agy` clears both the engine lock and `agy:*` model locks.
 
 `deepseek` is in the default `CONSULT_ORDER` (last, so in mode `first` it is only a fallback). It needs the
 `deeperseeker` proxy on `127.0.0.1:4000`; if the proxy is down or has no key, it falls back to the official API (`dsapi`, flash only, label `deepseek->dsapi`; see below), or fails soft

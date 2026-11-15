@@ -19,6 +19,7 @@
 
 `agy` 原本採選用制（Google AI Plus 配額很少）；2026-10-27 起列入預設順序，配額用完即移除（之前以 `--order copilot,codex,deepseek,agy`
 或 MCP 的 `order` 引數加入，建議每次審查只呼叫一次）。
+主模型為 `AGY_CONSULT_MODEL`（預設 `gemini-4-argon-high`，每週配額），備援模型為 `AGY_FALLBACK_MODEL`（預設 `gemini-4-hydrogen-high`，獨立的 5 小時配額；設為 `""` 則停用備援）。遇到用量／配額上限時，`agy` 會先寫入模型鎖（`agy:<主模型>`），並在同一次呼叫中以剩餘時間預算改跑備援模型一次（主模型鎖有效期間會直接跳過主模型）；逾時、當機、驗證失敗等非配額錯誤不會觸發備援。只有在備援模型也撞到用量／配額上限時，才會寫入整個 `agy` 引擎鎖（同時鎖住 `agy:<備援模型>`）。結果會標示為 `agy:<實際回答的模型>`，由備援回答時會附上 `fallback: argon quota-locked until <time>` 附註；`--locks` 會列出模型鎖，`--unlock agy` 會一併清除引擎鎖與 `agy:*` 模型鎖。
 
 `deepseek` 已列入預設的 `CONSULT_ORDER`（排在最後，因此在 `first` 模式下僅作為備援）。它需要 `deeperseeker` proxy
 在 `127.0.0.1:4000` 運作；若 proxy 未啟動或沒有金鑰，會自動改走官方 API（`dsapi`，僅限 flash，標示 `deepseek->dsapi`，見下），若也沒有金鑰則軟性失敗，其他引擎仍會照常回答。

@@ -53,7 +53,7 @@ A 2026-10-27 eval used a code-review prompt with planted bugs to pick the NIM ch
 
 The cause of that spread is the free tier itself: models stall, vanish (HTTP 404, or 410 after end of life) or return reasoning only, and latency varies a lot run to run because the free queue is shared.
 
-The fix is a fallback chain per free-tier engine, with a per-attempt timeout and a rule that a bare `nim` or `openrouter` may land on a different model. A test enforces that the OpenRouter and NIM chains share no model family, so the panel never counts one voice twice. A quota limit that names its own reset time becomes a lock, so the next run skips that engine until then.
+The fix is a fallback chain per free-tier engine, with a per-attempt timeout and a rule that a bare `nim` or `openrouter` may land on a different model. A test enforces that the OpenRouter and NIM chains share no model family, so the panel never counts one voice twice. A quota limit that names its own reset time becomes a lock, so the next run skips that engine until then; `agy` locks its primary model (`AGY_CONSULT_MODEL`, default `gemini-4-argon-high`, weekly quota) first and falls back to `AGY_FALLBACK_MODEL` (default `gemini-4-hydrogen-high`, 5-hour quota) before locking the engine.
 
 What stays open: Grok and others are in the loop diagram but have no bridge yet, and `agy` leaves the default order once its Google AI Plus quota is used up.
 

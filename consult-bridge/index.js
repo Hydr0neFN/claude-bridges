@@ -95,7 +95,8 @@ startServer("consult-bridge", "0.1.0", (server) => {
           const { text } = truncate(r.body, MAX_OUTPUT_CHARS);
           const meta = [`mode: first`, `engine: ${r.engine}`];
           if (trail.length) meta.push(`failover: ${trail.join("; ")}`);
-          if (lastResortNote(r)) meta.push(`note: ${lastResortNote(r)}`);
+          const notes = [r.note, lastResortNote(r)].filter(Boolean);
+          if (notes.length) meta.push(`note: ${notes.join("; ")}`);
           if (dropped.length) meta.push(`ignored: ${dropped.join(", ")}`);
           return withNotice(okText(`${text}\n\n---\n[consult] ${meta.join(" | ")}`), order);
         }
@@ -117,8 +118,10 @@ startServer("consult-bridge", "0.1.0", (server) => {
 
       const perCap = good.length > 1 ? PER_ENGINE_CHARS : MAX_OUTPUT_CHARS;
       const sections = good.map((r) => `## ${r.engine}\n\n${truncate(r.body, perCap).text}`);
+      const notes = good.filter((r) => r.note).map((r) => `${r.engine}: ${r.note}`);
       const meta = [`mode: all`, `answered: ${good.map((r) => r.engine).join(", ")}`];
       if (failed.length) meta.push(`failed: ${failed.join("; ")}`);
+      if (notes.length) meta.push(`note: ${notes.join("; ")}`);
       if (dropped.length) meta.push(`ignored: ${dropped.join(", ")}`);
       return withNotice(okText(`${sections.join("\n\n")}\n\n---\n[consult] ${meta.join(" | ")}`), order);
     },

@@ -214,7 +214,7 @@ ${tally}`);
     }
     if (r) {
       console.log(r.body);
-      const note = lastResortNote(r);
+      const note = [r.note, lastResortNote(r)].filter(Boolean).join("; ");
       console.log(`\n---\n[consult] mode: first | engine: ${r.engine}${trail.length ? ` | failover: ${trail.join("; ")}` : ""}${note ? ` | note: ${note}` : ""}`);
       return finish(0);
     }
