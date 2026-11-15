@@ -15,7 +15,7 @@ The `consult` tool currently fans out to **five engines**:
 | `opencode` | Official OpenCode CLI (`opencode`, logged in to OpenCode Zen) on its free models | Free; in the default order (after `openrouter`), with a 5-model fallback chain (`OPENCODE_CHAIN` overrides, `--opencode-model M` starts it at M). Runs in an empty temp dir with the read-only `plan` agent, prompt on stdin. **Free models may be logged or used by the provider: send non-private prompts only.** |
 | `dsapi` | Official DeepSeek API, flash models only (HTTP, not a CLI) | Pay-per-token (cheap); **opt-in (not in default order)**, but also the automatic fallback of `deepseek` |
 | `gemini` | Google Gemini API (OpenAI-compatible endpoint, HTTP, not a CLI) | AI Studio free-tier key (`GEMINI_API_KEY` or `~/.gemini-api-key`); prompt-only; in the default order (last), and also the automatic fallback of `agy` |
-| `azure` | Azure OpenAI chat completions (HTTP, not a CLI) | Azure subscription key (`AZURE_OPENAI_KEY` or `~/.azure-openai-key`) plus endpoint (`AZURE_OPENAI_ENDPOINT` or `~/.azure-openai-endpoint`); in the default order (after `opencode`); one model, no chain; prompt-only |
+| `azure` | Azure OpenAI chat completions (HTTP, not a CLI) | Azure subscription key (`AZURE_OPENAI_KEY` or `~/.azure-openai-key`) plus endpoint (`AZURE_OPENAI_ENDPOINT` or `~/.azure-openai-endpoint`); `AZURE_REASONING_EFFORT` defaults to `high` (`none` omits it); in the default order (after `opencode`); one model, no chain; prompt-only |
 
 `agy` was opt-in because its Google AI Plus quota is small; since 2026-10-27 it is in the default order until that quota is used up (before: opt in with `--order copilot,codex,deepseek,agy`)
 or the MCP `order` argument, ideally once per review.

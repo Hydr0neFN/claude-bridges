@@ -15,7 +15,7 @@
 | `opencode` | 官方 OpenCode CLI（`opencode`，已登入 OpenCode Zen），使用其免費模型 | Free；列入預設順序（在 `openrouter` 之後），帶有 5 個模型的備援鏈（`OPENCODE_CHAIN` 可覆寫，`--opencode-model M` 從 M 開始）。在空的暫存目錄以唯讀的 `plan` agent 執行，prompt 走 stdin。**供應商可能會記錄或使用免費模型的內容：只送非機密的 prompt。** |
 | `dsapi` | DeepSeek 官方 API，僅限 flash 模型（HTTP，非 CLI） | 按量計費（便宜）；**選用（不在預設順序中）**，但同時是 `deepseek` 的自動備援 |
 | `gemini` | Google Gemini API（OpenAI 相容端點，HTTP，非 CLI） | Google AI Studio 免費方案金鑰（`GEMINI_API_KEY` 或 `~/.gemini-api-key`）；僅傳 prompt；列入預設順序（最後），同時是 `agy` 的自動備援 |
-| `azure` | Azure OpenAI 聊天補全（HTTP，非 CLI） | Azure 訂閱金鑰（`AZURE_OPENAI_KEY` 或 `~/.azure-openai-key`）加端點（`AZURE_OPENAI_ENDPOINT` 或 `~/.azure-openai-endpoint`）；列入預設順序（在 `opencode` 之後）；單一模型、無備援鏈；僅傳 prompt |
+| `azure` | Azure OpenAI 聊天補全（HTTP，非 CLI） | Azure 訂閱金鑰（`AZURE_OPENAI_KEY` 或 `~/.azure-openai-key`）加端點（`AZURE_OPENAI_ENDPOINT` 或 `~/.azure-openai-endpoint`）；`AZURE_REASONING_EFFORT` 預設為 `high`（`none` 則省略）；列入預設順序（在 `opencode` 之後）；單一模型、無備援鏈；僅傳 prompt |
 
 `agy` 原本採選用制（Google AI Plus 配額很少）；2026-10-27 起列入預設順序，配額用完即移除（之前以 `--order copilot,codex,deepseek,agy`
 或 MCP 的 `order` 引數加入，建議每次審查只呼叫一次）。

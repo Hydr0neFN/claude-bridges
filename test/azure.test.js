@@ -6,7 +6,7 @@ import os from "node:os";
 import { parseOrderDetailed, parseArgs } from "../lib/args.js";
 import { withLocks, readLocks, parseLimit, LOCKABLE } from "../lib/locks.js";
 import { validateSpec } from "../lib/debate.js";
-import { ENGINES, MODEL_ENGINES, DEFAULT_AZURE_MODEL, azureTimeoutSec, runSpec } from "../lib/engines.js";
+import { ENGINES, MODEL_ENGINES, DEFAULT_AZURE_MODEL, azureTimeoutSec, azureReasoningEffort, runSpec } from "../lib/engines.js";
 
 // Built at runtime so no key-shaped literal lands in the repo.
 const KEY = "az" + "k".repeat(30);
@@ -48,7 +48,7 @@ test("azure: request shape, answer and label", async () => {
     assert.equal(init.headers["api-key"], KEY);
     assert.equal(init.headers["Content-Type"], "application/json");
     assert.ok(!Object.keys(init.headers).some((h) => h.toLowerCase() === "authorization"));
-    assert.deepEqual(body, { model: "gpt-6.1-sol", messages: [{ role: "user", content: "hi" }], max_completion_tokens: 16000 });
+    assert.deepEqual(body, { model: "gpt-6.1-sol", messages: [{ role: "user", content: "hi" }], max_completion_tokens: 16000, reasoning_effort: "high" });
     for (const k of ["temperature", "max_tokens", "stream"]) assert.ok(!(k in body), k);
   }
 });
@@ -198,4 +198,55 @@ test("azure: order and args", () => {
 test("azure: usable as a debate stance engine", () => {
   const s = validateSpec({ question: "q", stances: [{ engine: "azure", stance: "pick A" }, { engine: "azure:gpt-5", stance: "pick B" }] });
   assert.deepEqual(s.stances.map((x) => x.engine), ["azure", "azure:gpt-5"]);
+});
+
+test("azure: AZURE_REASONING_EFFORT defaults to high, sends valid override, rejects invalid, omits none", async () => {
+  assert.equal(azureReasoningEffort({}), "high");
+  for (const v of ["none", "minimal", "low", "medium", "high", "xhigh", "max"]) {
+    assert.equal(azureReasoningEffort({ AZURE_REASONING_EFFORT: v }), v);
+  }
+  assert.equal(azureReasoningEffort({ AZURE_REASONING_EFFORT: "bogus" }), "high");
+
+  const fXhigh = fakeFetch([ok({ content: "ok" })]);
+  await run(fXhigh, { env: { ...env, AZURE_REASONING_EFFORT: "xhigh" } });
+  assert.equal(fXhigh.calls[0].body.reasoning_effort, "xhigh");
+
+  const fBad = fakeFetch([ok({ content: "ok" })]);
+  await run(fBad, { env: { ...env, AZURE_REASONING_EFFORT: "turbo" } });
+  assert.equal(fBad.calls[0].body.reasoning_effort, "high");
+
+  const fNone = fakeFetch([ok({ content: "ok" })]);
+  await run(fNone, { env: { ...env, AZURE_REASONING_EFFORT: "none" } });
+  assert.ok(!("reasoning_effort" in fNone.calls[0].body));
+});
+
+test("azure: 400 mentioning reasoning_effort retries once without it and notes on stderr", async () => {
+  let errOut = "";
+  const origWrite = process.stderr.write;
+  process.stderr.write = (chunk, ...rest) => {
+    errOut += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+    return typeof rest.at(-1) === "function" ? (rest.at(-1)(), true) : true;
+  };
+  try {
+    const f = fakeFetch([
+      status(400, "Unsupported parameter: 'reasoning_effort' is not supported with this model."),
+      ok({ content: "fallback ok" }),
+    ]);
+    const r = await run(f);
+    assert.deepEqual(r, { engine: "azure:gpt-6.1-sol", ok: true, body: "fallback ok" });
+    assert.equal(f.calls.length, 2);
+    assert.equal(f.calls[0].body.reasoning_effort, "high");
+    assert.ok(!("reasoning_effort" in f.calls[1].body));
+    assert.match(errOut, / \(reasoning_effort dropped: unsupported\)/);
+
+    const fFail = fakeFetch([
+      status(400, "Unsupported value: reasoning_effort"),
+      status(400, "still rejected reasoning_effort"),
+    ]);
+    const rFail = await run(fFail);
+    assert.equal(rFail.ok, false);
+    assert.equal(fFail.calls.length, 2);
+  } finally {
+    process.stderr.write = origWrite;
+  }
 });
