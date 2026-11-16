@@ -21,7 +21,7 @@ import { runSpec, dsapiUsageNotice, withGeminiFallback, parseSpec } from "./lib/
 import { validateSpec, loadContext, runDebate } from "./lib/debate.js";
 import { parseArgs, parseOrderDetailed, resolvePrompt, retiredInOrder } from "./lib/args.js";
 import { runEnvelope, envelope, EXIT } from "./lib/cli-json.js";
-import { runPanel, runChain, lastResortNote, formatSection, summaryLine, writeEngineResult, writeDone } from "./lib/panel.js";
+import { runPanel, runChain, lastResortNote, formatSection, summaryLine, writeEngineResult, writeDone, CLI_ENGINES, cliSerialEnabled } from "./lib/panel.js";
 import { checkUpdates, spawnRefresh, settle, applyUpdates, formatFooter } from "./lib/updates.js";
 import { readRound1, buildRound2Prompt, dissentBlock } from "./lib/round2.js";
 import { withLocks, activeLocks, unlock, localTime } from "./lib/locks.js";
@@ -138,6 +138,7 @@ async function main() {
   const geminiMember = order.some((sp) => parseSpec(sp).engine === "gemini");
   const runLocked = withGeminiFallback(withLocks(runSpec, { ignore: args.ignoreLocks }), { skip: geminiMember });
   const run = (name) => runLocked(name, { prompt, cwd, timeoutSec: TIMEOUT_SEC }, opts).then((r) => (ran.push(r), r));
+  const serial = cliSerialEnabled() ? (spec) => CLI_ENGINES.has(parseSpec(spec).engine) : undefined;
 
   // Resolves true once the stream has flushed `text` (a write to a closed pipe reports false).
   const write = (stream, text) => new Promise((resolve) => stream.write(text, (err) => resolve(!err)));
@@ -168,6 +169,7 @@ async function main() {
     const results2 = await runPanel({
       order: r1.answers.map((a) => a.label),
       run: (name) => runLocked(name, { prompt: buildRound2Prompt(r1.prompt, r1.answers, r1.answers.findIndex((a) => a.label === name)), cwd, timeoutSec: TIMEOUT_SEC }, opts),
+      serial,
       onSettle: (name, r) => {
         if (!args.json) console.log(formatSection(r));
         writeEngineResult(dir2, name, r);
@@ -227,6 +229,7 @@ ${tally}`);
   const results = await runPanel({
     order,
     run,
+    serial,
     onSettle: (name, r) => {
       if (!args.json) console.log(formatSection(r));
       if (args.outDir) writeEngineResult(args.outDir, name, r);

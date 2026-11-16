@@ -74,6 +74,8 @@ One `npm install` at the root serves all servers — Node resolves `node_modules
 - Environment variables and their defaults: [docs/configuration.md](docs/configuration.md).
 - `consult-cli.js --json` prints one `{ok,code,message,data}` object; the contract is in [docs/cli-json.md](docs/cli-json.md).
 
+`CONSULT_CLI_SERIAL` (`1` = on, `0` = off; unset defaults to on when total RAM is `<= 12 GiB`, else off) runs the CLI-based engines (`copilot`, `codex`, `agy`, `opencode`) one at a time in `consult-cli.js` while keeping HTTP engines parallel, and kills each CLI process tree when it settles to keep memory low.
+
 ## Repo layout
 
 ```

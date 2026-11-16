@@ -74,6 +74,8 @@ npm test
 - 環境變數與預設值：[docs/configuration.zh-TW.md](docs/configuration.zh-TW.md)。
 - `consult-cli.js --json` 只印一個 `{ok,code,message,data}` 物件；格式見 [docs/cli-json.md](docs/cli-json.md)。
 
+`CONSULT_CLI_SERIAL`（`1` = 開啟、`0` = 關閉；未設定時若總記憶體 `<= 12 GiB` 則自動開啟，否則關閉）會讓 `consult-cli.js` 依序一次只跑一個 CLI 引擎（`copilot`、`codex`、`agy`、`opencode`），同時維持 HTTP 引擎平行執行，並在每個 CLI 結束時清除整個行程樹，以壓低記憶體用量。
+
 ## 專案結構
 
 ```
