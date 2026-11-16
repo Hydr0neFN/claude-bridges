@@ -18,7 +18,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { runSpec, dsapiUsageNotice, withGeminiFallback, parseSpec } from "./lib/engines.js";
+import { runSpec, dsapiUsageNotice, withGeminiFallback, parseSpec, azureModel } from "./lib/engines.js";
 import { validateSpec, loadContext, runDebate } from "./lib/debate.js";
 import { parseArgs, parseOrderDetailed, resolvePrompt, retiredInOrder } from "./lib/args.js";
 import { runEnvelope, envelope, EXIT } from "./lib/cli-json.js";
@@ -145,7 +145,8 @@ async function main() {
     if (process.env.CONSULT_RUN_STATUS === "0") return noopStatus;
     const dir = runStatusDir();
     pruneRuns(dir);
-    return createRunStatus({ kind, question, order: runOrder, rounds, dir });
+    // azure runs one fixed model, so the ring can show it before the answer arrives.
+    return createRunStatus({ kind, question, order: runOrder, rounds, dir, models: { azure: azureModel(args.azureModel) } });
   };
   const trackRun = (status, name, call) => {
     status.start(name);

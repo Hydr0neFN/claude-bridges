@@ -304,3 +304,8 @@ test("engines[].model: from an engine:model label at start, then from the engine
   assert.equal(doc.engines[1].model, "gpt-6.1-sol");
   assert.equal(doc.engines[2].model, null);
 });
+
+test("engines[].model: a bare label takes its model from the models option", () => {
+  const st = createRunStatus({ kind: "all", question: "q", order: ["azure", "copilot"], dir: tmpDir(), now: () => 1, pid: 8, models: { azure: "gpt-6.1-sol" } });
+  assert.deepEqual(readJson(st.file).engines.map((e) => e.model), ["gpt-6.1-sol", null]);
+});
