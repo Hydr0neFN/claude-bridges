@@ -46,6 +46,7 @@ test("state transitions queued -> running -> ok/failed/skipped with valid atomic
     doc.engines,
     ["copilot", "codex", "agy", "nim:x"].map((name) => ({
       name,
+      model: name === "nim:x" ? "x" : null,
       state: "queued",
       startedAt: null,
       endedAt: null,
@@ -178,6 +179,7 @@ test("newRound resets only the named engines and preserves others' state", () =>
   assert.equal(doc.round, 2);
   assert.deepEqual(doc.engines[0], {
     name: "copilot",
+    model: null,
     state: "queued",
     startedAt: null,
     endedAt: null,
@@ -186,6 +188,7 @@ test("newRound resets only the named engines and preserves others' state", () =>
   });
   assert.deepEqual(doc.engines[1], {
     name: "codex",
+    model: null,
     state: "failed",
     startedAt: 1763300003010,
     endedAt: 1763300003030,
@@ -194,6 +197,7 @@ test("newRound resets only the named engines and preserves others' state", () =>
   });
   assert.deepEqual(doc.engines[2], {
     name: "nim:m",
+    model: "m",
     state: "queued",
     startedAt: null,
     endedAt: null,
@@ -287,4 +291,16 @@ test("serial mode via runPanel keeps queued CLI engines in 'queued' state until 
     who: "codex",
     engines: [["copilot", "ok"], ["codex", "running"]],
   });
+});
+
+test("engines[].model: from an engine:model label at start, then from the engine that answered", () => {
+  const dir = tmpDir();
+  const st = createRunStatus({ kind: "all", question: "q", order: ["agy:gemini-4-argon-high", "azure", "codex"], dir, now: () => 1, pid: 7 });
+  let doc = readJson(st.file);
+  assert.deepEqual(doc.engines.map((e) => e.model), ["gemini-4-argon-high", null, null]);
+  st.settle("azure", { ok: true, engine: "azure:gpt-6.1-sol", body: "B" });
+  st.settle("codex", { skipped: true, reason: "locked" });
+  doc = readJson(st.file);
+  assert.equal(doc.engines[1].model, "gpt-6.1-sol");
+  assert.equal(doc.engines[2].model, null);
 });

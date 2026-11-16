@@ -78,7 +78,7 @@ One `npm install` at the root serves all servers — Node resolves `node_modules
 
 ### Live run status
 
-While `consult-cli.js` runs (`all`, `first`, `round2`, or `debate`), it writes an atomic JSON status file to `~/.claude/state/consult-runs/<startedAt>-<pid>.json` (override the directory with `CONSULT_RUNS_DIR`; set `CONSULT_RUN_STATUS=0` to disable) showing per-engine states (`queued`, `running`, `ok`, `failed`, `skipped`). Files older than 24 hours are pruned on start.
+While `consult-cli.js` runs (`all`, `first`, `round2`, or `debate`), it writes an atomic JSON status file to `~/.claude/state/consult-runs/<startedAt>-<pid>.json` (override the directory with `CONSULT_RUNS_DIR`; set `CONSULT_RUN_STATUS=0` to disable) showing per-engine states (`queued`, `running`, `ok`, `failed`, `skipped`) and, when known, the engine's `model` (from an `engine:model` label, or from the engine that answered). Files older than 24 hours are pruned on start.
 
 ## Repo layout
 
