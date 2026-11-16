@@ -309,3 +309,11 @@ test("engines[].model: a bare label takes its model from the models option", () 
   const st = createRunStatus({ kind: "all", question: "q", order: ["azure", "copilot"], dir: tmpDir(), now: () => 1, pid: 8, models: { azure: "gpt-6.1-sol" } });
   assert.deepEqual(readJson(st.file).engines.map((e) => e.model), ["gpt-6.1-sol", null]);
 });
+
+test("engines[].model: a route note names the model, free-text notes do not", () => {
+  const st = createRunStatus({ kind: "all", question: "q", order: ["agy", "nim", "copilot"], dir: tmpDir(), now: () => 1, pid: 9 });
+  st.settle("agy", { ok: true, engine: "agy", body: "B", note: "agy:gemini-4-argon-high" });
+  st.settle("nim", { ok: true, engine: "nim", body: "B", note: "[truncated: stream error: x]" });
+  st.settle("copilot", { ok: true, engine: "copilot", body: "B" });
+  assert.deepEqual(readJson(st.file).engines.map((e) => e.model), ["gemini-4-argon-high", null, null]);
+});
