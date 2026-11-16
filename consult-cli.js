@@ -14,6 +14,7 @@
 //        (an engine that reports a usage/quota limit is locked until its reset time, state in ~/.claude/state/consult-locks.json)
 //        consult --round2 <round-1 out-dir>   (round 2: answering engines see each other's round-1 answers, critique, may revise; writes <dir>/round2/, prints a dissent block)
 //        consult --check-updates | --update | --check-nim-models | --refresh-nim-models
+//        Live run status: ~/.claude/state/consult-runs/<startedAt>-<pid>.json (env CONSULT_RUNS_DIR, CONSULT_RUN_STATUS=0 to disable)
 
 import fs from "node:fs";
 import path from "node:path";
@@ -26,6 +27,7 @@ import { checkUpdates, spawnRefresh, settle, applyUpdates, formatFooter } from "
 import { readRound1, buildRound2Prompt, dissentBlock } from "./lib/round2.js";
 import { withLocks, activeLocks, unlock, localTime } from "./lib/locks.js";
 import { peekNimModels, refreshNimModels, formatNimNotice, nimNoticeGate, orderUsesNim } from "./lib/nim-models.js";
+import { createRunStatus, pruneRuns, runStatusDir } from "./lib/run-status.js";
 
 const TIMEOUT_SEC = Number(process.env.CONSULT_TIMEOUT) || 300;
 
@@ -137,8 +139,32 @@ async function main() {
   // withLocks inner so an agy quota failure still writes its lock before the Gemini fallback runs.
   const geminiMember = order.some((sp) => parseSpec(sp).engine === "gemini");
   const runLocked = withGeminiFallback(withLocks(runSpec, { ignore: args.ignoreLocks }), { skip: geminiMember });
-  const run = (name) => runLocked(name, { prompt, cwd, timeoutSec: TIMEOUT_SEC }, opts).then((r) => (ran.push(r), r));
   const serial = cliSerialEnabled() ? (spec) => CLI_ENGINES.has(parseSpec(spec).engine) : undefined;
+  const noopStatus = { start() {}, settle() {}, newRound() {}, end() {} };
+  const startStatus = ({ kind, question, order: runOrder, rounds = 1 }) => {
+    if (process.env.CONSULT_RUN_STATUS === "0") return noopStatus;
+    const dir = runStatusDir();
+    pruneRuns(dir);
+    return createRunStatus({ kind, question, order: runOrder, rounds, dir });
+  };
+  const trackRun = (status, name, call) => {
+    status.start(name);
+    try {
+      return Promise.resolve(call()).then(
+        (r) => {
+          status.settle(name, r);
+          return r;
+        },
+        (err) => {
+          status.settle(name, { ok: false, reason: `crashed: ${err?.message || err}` });
+          throw err;
+        },
+      );
+    } catch (err) {
+      status.settle(name, { ok: false, reason: `crashed: ${err?.message || err}` });
+      throw err;
+    }
+  };
 
   // Resolves true once the stream has flushed `text` (a write to a closed pipe reports false).
   const write = (stream, text) => new Promise((resolve) => stream.write(text, (err) => resolve(!err)));
@@ -166,9 +192,13 @@ async function main() {
       return finish(e?.code === "ENOENT" ? EXIT.notFound : 2);
     }
     const dir2 = path.join(args.round2, "round2");
+    const r2Order = r1.answers.map((a) => a.label);
+    const status = startStatus({ kind: "round2", question: r1.prompt, order: r2Order, rounds: 2 });
     const results2 = await runPanel({
-      order: r1.answers.map((a) => a.label),
-      run: (name) => runLocked(name, { prompt: buildRound2Prompt(r1.prompt, r1.answers, r1.answers.findIndex((a) => a.label === name)), cwd, timeoutSec: TIMEOUT_SEC }, opts),
+      order: r2Order,
+      run: (name) => trackRun(status, name, () =>
+        runLocked(name, { prompt: buildRound2Prompt(r1.prompt, r1.answers, r1.answers.findIndex((a) => a.label === name)), cwd, timeoutSec: TIMEOUT_SEC }, opts),
+      ),
       serial,
       onSettle: (name, r) => {
         if (!args.json) console.log(formatSection(r));
@@ -177,6 +207,7 @@ async function main() {
     });
     const block = dissentBlock(results2);
     writeDone(dir2, block);
+    status.end(block);
     if (args.json) console.log(JSON.stringify(envelope(results2.some((r) => r.ok), results2.some((r) => r.ok) ? "OK" : "ALL_ENGINES_FAILED", "round 2 finished", { out_dir: dir2, dissent: block })));
     else console.log(`---\n${block}`);
     return finish(results2.some((r) => r.ok) ? 0 : 1);
@@ -194,33 +225,50 @@ async function main() {
       jsonFail(missing ? "NOT_FOUND" : "USAGE", e.message);
       return finish(missing ? EXIT.notFound : 2);
     }
+    const status = startStatus({
+      kind: "debate",
+      question: spec.question,
+      order: spec.stances.map((st) => st.engine),
+      rounds: spec.rounds,
+    });
     const { digestPath, tally } = await runDebate({
       spec,
       outDir: args.outDir,
       ctx: loadContext(spec),
-      run: (name, p) => runLocked(name, { prompt: p, cwd, timeoutSec: TIMEOUT_SEC }, opts),
+      onRound: (roundNumber, engineNames) => {
+        if (roundNumber > 1) status.newRound(roundNumber, engineNames);
+      },
+      run: (name, p) => trackRun(status, name, () => runLocked(name, { prompt: p, cwd, timeoutSec: TIMEOUT_SEC }, opts)),
     });
+    status.end(tally);
     if (args.json) console.log(JSON.stringify(envelope(true, "OK", "debate finished", { digest_path: digestPath, tally, out_dir: args.outDir })));
     else console.log(`${digestPath}
 ${tally}`);
     return finish(0);
   }
 
+  const status = startStatus({ kind: mode === "first" ? "first" : "all", question: prompt, order, rounds: 1 });
+  const run = (name) => trackRun(status, name, () => runLocked(name, { prompt, cwd, timeoutSec: TIMEOUT_SEC }, opts)).then((r) => (ran.push(r), r));
+
   if (mode === "first") {
     const { result: r, trail } = await runChain(order, run);
+    const note = r ? [r.note, lastResortNote(r)].filter(Boolean).join("; ") : "";
+    const summary = r
+      ? `[consult] mode: first | engine: ${r.engine}${trail.length ? ` | failover: ${trail.join("; ")}` : ""}${note ? ` | note: ${note}` : ""}`
+      : `consult: all engines failed.\n${trail.map((t) => `- ${t}`).join("\n")}`;
+    status.end(summary);
     if (args.json) {
       const env = runEnvelope({ mode: "first", results: ran, trail });
-      if (!env.ok) console.error(`consult: all engines failed.\n${trail.map((t) => `- ${t}`).join("\n")}`);
+      if (!env.ok) console.error(summary);
       console.log(JSON.stringify(env));
       return finish(env.ok ? 0 : 1);
     }
     if (r) {
       console.log(r.body);
-      const note = [r.note, lastResortNote(r)].filter(Boolean).join("; ");
-      console.log(`\n---\n[consult] mode: first | engine: ${r.engine}${trail.length ? ` | failover: ${trail.join("; ")}` : ""}${note ? ` | note: ${note}` : ""}`);
+      console.log(`\n---\n${summary}`);
       return finish(0);
     }
-    console.error(`consult: all engines failed.\n${trail.map((t) => `- ${t}`).join("\n")}`);
+    console.error(summary);
     return finish(1);
   }
 
@@ -236,18 +284,18 @@ ${tally}`);
     },
   });
   const summary = summaryLine(results);
+  const failMsg = summary ? null : `consult: all engines failed.\n${results.map((r) => `- ${r.engine}: ${r.reason}`).join("\n")}`;
+  status.end(summary || failMsg);
   if (args.json) {
     const env = runEnvelope({ mode: "all", results, outDir: args.outDir || undefined });
-    if (args.outDir) writeDone(args.outDir, summary || `consult: all engines failed.\n${results.map((r) => `- ${r.engine}: ${r.reason}`).join("\n")}`);
-    if (!summary) console.error(`consult: all engines failed.\n${results.map((r) => `- ${r.engine}: ${r.reason}`).join("\n")}`);
+    if (args.outDir) writeDone(args.outDir, summary || failMsg);
+    if (!summary) console.error(failMsg);
     console.log(JSON.stringify(env));
     return finish(summary ? 0 : 1);
   }
   if (!summary) {
-    const failed = results.map((r) => `${r.engine}: ${r.reason}`);
-    const msg = `consult: all engines failed.\n${failed.map((t) => `- ${t}`).join("\n")}`;
-    if (args.outDir) writeDone(args.outDir, msg);
-    console.error(msg);
+    if (args.outDir) writeDone(args.outDir, failMsg);
+    console.error(failMsg);
     return finish(1);
   }
   if (args.outDir) writeDone(args.outDir, summary);

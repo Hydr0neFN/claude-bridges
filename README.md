@@ -76,6 +76,10 @@ One `npm install` at the root serves all servers — Node resolves `node_modules
 
 `CONSULT_CLI_SERIAL` (`1` = on, `0` = off; unset defaults to on when total RAM is `<= 12 GiB`, else off) runs the CLI-based engines (`copilot`, `codex`, `agy`, `opencode`) one at a time in `consult-cli.js` while keeping HTTP engines parallel, and kills each CLI process tree when it settles to keep memory low.
 
+### Live run status
+
+While `consult-cli.js` runs (`all`, `first`, `round2`, or `debate`), it writes an atomic JSON status file to `~/.claude/state/consult-runs/<startedAt>-<pid>.json` (override the directory with `CONSULT_RUNS_DIR`; set `CONSULT_RUN_STATUS=0` to disable) showing per-engine states (`queued`, `running`, `ok`, `failed`, `skipped`). Files older than 24 hours are pruned on start.
+
 ## Repo layout
 
 ```
