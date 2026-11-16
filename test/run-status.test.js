@@ -317,3 +317,12 @@ test("engines[].model: a route note names the model, free-text notes do not", ()
   st.settle("copilot", { ok: true, engine: "copilot", body: "B" });
   assert.deepEqual(readJson(st.file).engines.map((e) => e.model), ["gemini-4-argon-high", null, null]);
 });
+
+test("panelModels: every bare engine has a model to show from the start", async () => {
+  const { panelModels } = await import("../lib/engines.js");
+  const m = panelModels({}, {});
+  assert.equal(m.copilot, "auto");
+  assert.equal(m.azure, "gpt-6.1-sol");
+  assert.equal(m.opencode, "beam-free");
+  for (const k of ["codex", "deepseek", "dsapi", "agy", "gemini", "nim", "openrouter"]) assert.ok(m[k], k);
+});
