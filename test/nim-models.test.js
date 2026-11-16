@@ -246,41 +246,38 @@ test("cli --check-nim-models: no key exits 0 even when an older cache carries an
   assert.match(r.stdout, /no key configured/);
 });
 
-// --- notice throttle: 3 shows, then a 1-day cooldown, shared with an external hook ---
+// --- notice throttle: 1 show, then a 1-day cooldown, shared with an external hook ---
 
 const KEY = "1:a/b,c/d";
 
-test("noticeAllowed: shows at t=0,1,2, silent at 3 and day-1, shows again after the cooldown", () => {
+test("noticeAllowed: shows at t=0, silent until day-1, shows again after the cooldown", () => {
   const base = T0;
   let state = null;
-  const seq = [0, 1, 2, 3, DAY - 1, DAY + 5, 2 * DAY + 10].map((dt) => {
+  const seq = [0, 1, 2, DAY - 1, DAY, DAY + 5, 2 * DAY + 10].map((dt) => {
     const next = noticeAllowed(state, KEY, base + dt);
     if (next) state = next;
     return !!next;
   });
-  // Same expectation as the Python hook: [T,T,T,F,F,T,T].
-  assert.deepEqual(seq, [true, true, true, false, false, true, true]);
+  // Same expectation as the Python hook: [T,F,F,F,T,F,T].
+  assert.deepEqual(seq, [true, false, false, false, true, false, true]);
 });
 
 test("noticeAllowed: states written and the cooldown boundary", () => {
   const s1 = noticeAllowed(null, KEY, T0);
-  assert.deepEqual(s1, { key: KEY, count: 1, windowStart: T0, cooldownUntil: 0 });
-  const s2 = noticeAllowed(s1, KEY, T0 + 1);
-  const s3 = noticeAllowed(s2, KEY, T0 + 2);
-  assert.deepEqual(s3, { key: KEY, count: 3, windowStart: T0, cooldownUntil: T0 + 2 + DAY });
-  assert.equal(noticeAllowed(s3, KEY, T0 + 2 + DAY - 1), null);
-  const s4 = noticeAllowed(s3, KEY, T0 + 2 + DAY);
-  assert.deepEqual(s4, { key: KEY, count: 1, windowStart: T0 + 2 + DAY, cooldownUntil: 0 });
+  assert.deepEqual(s1, { key: KEY, count: 1, windowStart: T0, cooldownUntil: T0 + DAY });
+  assert.equal(noticeAllowed(s1, KEY, T0 + DAY - 1), null);
+  const s2 = noticeAllowed(s1, KEY, T0 + DAY);
+  assert.deepEqual(s2, { key: KEY, count: 1, windowStart: T0 + DAY, cooldownUntil: T0 + 2 * DAY });
 });
 
-test("noticeAllowed: window rollover resets the count without a cooldown", () => {
-  const s = { key: KEY, count: 2, windowStart: 0, cooldownUntil: 0 };
-  assert.deepEqual(noticeAllowed(s, KEY, DAY), { key: KEY, count: 1, windowStart: DAY, cooldownUntil: 0 });
-  assert.equal(noticeAllowed(s, KEY, DAY - 1).count, 3);
+test("noticeAllowed: window rollover resets the count", () => {
+  const s = { key: KEY, count: 1, windowStart: 0, cooldownUntil: 0 };
+  assert.deepEqual(noticeAllowed(s, KEY, DAY), { key: KEY, count: 1, windowStart: DAY, cooldownUntil: 2 * DAY });
+  assert.equal(noticeAllowed(s, KEY, DAY - 1).count, 2);
 });
 
 test("noticeAllowed: a new key resets even during a cooldown; unusable state counts as none", () => {
-  const cooling = { key: KEY, count: 3, windowStart: 5, cooldownUntil: 5 + DAY };
+  const cooling = { key: KEY, count: 1, windowStart: 5, cooldownUntil: 5 + DAY };
   assert.equal(noticeAllowed(cooling, KEY, 6), null);
   assert.equal(noticeAllowed(cooling, "other", 6).count, 1);
   for (const bad of [null, undefined, "x", 42, [], {}, { key: KEY, count: "a", windowStart: null, cooldownUntil: "z" }]) {
@@ -310,26 +307,22 @@ test("nimNoticeGate: nothing new -> no text, commit writes nothing", () => {
   assert.equal(fs.existsSync(file), false);
 });
 
-test("nimNoticeGate: state is written only on commit, 3 shows then silent, no stray tmp files", () => {
+test("nimNoticeGate: state is written only on commit, 1 show then silent, no stray tmp files", () => {
   const c = ctx();
   const file = path.join(c.dir, "nim-notice.json");
   const cache = { checkedAt: T0, new: ["a/b", "c/d"] };
   const g1 = nimNoticeGate(cache, { file, now: T0 });
   assert.equal(g1.text, formatNimNotice(cache));
   assert.equal(fs.existsSync(file), false, "deciding alone must not write");
+  // Decided but never printed (no commit): a second decision still shows.
+  assert.ok(nimNoticeGate(cache, { file, now: T0 }).text);
   g1.commit();
   assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")), {
-    key: noticeKey(cache), count: 1, windowStart: T0, cooldownUntil: 0,
+    key: noticeKey(cache), count: 1, windowStart: T0, cooldownUntil: T0 + DAY,
   });
-  // Decided but never printed (no commit): the count does not advance.
-  assert.ok(nimNoticeGate(cache, { file, now: T0 + 1 }).text);
-  assert.equal(JSON.parse(fs.readFileSync(file, "utf8")).count, 1);
-  nimNoticeGate(cache, { file, now: T0 + 1 }).commit();
-  nimNoticeGate(cache, { file, now: T0 + 2 }).commit();
-  assert.equal(JSON.parse(fs.readFileSync(file, "utf8")).cooldownUntil, T0 + 2 + DAY);
-  assert.equal(nimNoticeGate(cache, { file, now: T0 + 3 }).text, null);
+  assert.equal(nimNoticeGate(cache, { file, now: T0 + 1 }).text, null);
   assert.equal(nimNoticeGate(cache, { file, now: T0 + DAY - 1 }).text, null);
-  assert.ok(nimNoticeGate(cache, { file, now: T0 + 2 + DAY }).text);
+  assert.ok(nimNoticeGate(cache, { file, now: T0 + DAY }).text);
   // A new check result (new key) starts over.
   assert.ok(nimNoticeGate({ checkedAt: T0 + 5, new: ["e/f"] }, { file, now: T0 + 3 }).text);
   assert.deepEqual(fs.readdirSync(c.dir).filter((f) => f.endsWith(".tmp")), []);
@@ -355,8 +348,8 @@ test("nimNoticeGate: corrupt or unreadable throttle file fails open; unwritable 
 });
 
 test("noticeAllowed: a clock that moved back (now < windowStart) starts a fresh window", () => {
-  const s = { key: KEY, count: 2, windowStart: T0 + 10 * 1000, cooldownUntil: 0 };
-  assert.deepEqual(noticeAllowed(s, KEY, T0), { key: KEY, count: 1, windowStart: T0, cooldownUntil: 0 });
+  const s = { key: KEY, count: 0, windowStart: T0 + 10 * 1000, cooldownUntil: 0 };
+  assert.deepEqual(noticeAllowed(s, KEY, T0), { key: KEY, count: 1, windowStart: T0, cooldownUntil: T0 + DAY });
 });
 
 test("nimNoticeGate: commit re-reads the file, so runs decided on the same stale state do not lose updates", () => {
@@ -367,15 +360,13 @@ test("nimNoticeGate: commit re-reads the file, so runs decided on the same stale
   // Five parallel runs all decide while the file is still empty ...
   const gates = [1, 2, 3, 4, 5].map((i) => nimNoticeGate(cache, { file, now: T0 + i }));
   assert.ok(gates.every((g) => g.text));
-  // ... and commit one after another (e.g. minutes later): counts accumulate instead of resetting to 1.
+  // ... and commit one after another (e.g. minutes later): the first commit starts the cooldown.
   gates[0].commit();
-  assert.equal(read().count, 1);
-  gates[1].commit();
-  assert.equal(read().count, 2);
-  gates[2].commit();
-  assert.deepEqual(read(), { key: noticeKey(cache), count: 3, windowStart: T0 + 1, cooldownUntil: T0 + 3 + DAY });
+  assert.deepEqual(read(), { key: noticeKey(cache), count: 1, windowStart: T0 + 1, cooldownUntil: T0 + 1 + DAY });
   // The remaining ones find the cooldown already in force and leave the state alone.
   const before = fs.readFileSync(file, "utf8");
+  gates[1].commit();
+  gates[2].commit();
   gates[3].commit();
   gates[4].commit();
   assert.equal(fs.readFileSync(file, "utf8"), before);
