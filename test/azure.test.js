@@ -40,7 +40,7 @@ test("azure: request shape, answer and label", async () => {
   for (const endpoint of [ENDPOINT, `${ENDPOINT}/`, `${ENDPOINT}//`]) {
     const f = fakeFetch([ok({ content: " azure ok \n" })]);
     const r = await run(f, { env: { ...env, AZURE_OPENAI_ENDPOINT: endpoint } });
-    assert.deepEqual(r, { engine: "azure:gpt-6.1-sol", ok: true, body: "azure ok" });
+    assert.deepEqual(r, { engine: "azure:gpt-6.2-sol", ok: true, body: "azure ok" });
     assert.equal(f.calls.length, 1);
     const { url, init, body } = f.calls[0];
     assert.equal(url, URL_OK);
@@ -48,7 +48,7 @@ test("azure: request shape, answer and label", async () => {
     assert.equal(init.headers["api-key"], KEY);
     assert.equal(init.headers["Content-Type"], "application/json");
     assert.ok(!Object.keys(init.headers).some((h) => h.toLowerCase() === "authorization"));
-    assert.deepEqual(body, { model: "gpt-6.1-sol", messages: [{ role: "user", content: "hi" }], max_completion_tokens: 16000, reasoning_effort: "high" });
+    assert.deepEqual(body, { model: "gpt-6.2-sol", messages: [{ role: "user", content: "hi" }], max_completion_tokens: 16000, reasoning_effort: "high" });
     for (const k of ["temperature", "max_tokens", "stream"]) assert.ok(!(k in body), k);
   }
 });
@@ -100,9 +100,9 @@ test("azure: 429 with quota text locks through withLocks; a bare 429 does not lo
 test("azure: missing key or endpoint -> clean failure, no request, never a throw", async () => {
   const f = fakeFetch([ok({ content: "x" })]);
   const noKey = await run(f, { env: { AZURE_OPENAI_ENDPOINT: ENDPOINT } });
-  assert.deepEqual(noKey, { engine: "azure:gpt-6.1-sol", ok: false, reason: "no key (env AZURE_OPENAI_KEY or ~/.azure-openai-key)" });
+  assert.deepEqual(noKey, { engine: "azure:gpt-6.2-sol", ok: false, reason: "no key (env AZURE_OPENAI_KEY or ~/.azure-openai-key)" });
   const noEp = await run(f, { env: { AZURE_OPENAI_KEY: KEY } });
-  assert.deepEqual(noEp, { engine: "azure:gpt-6.1-sol", ok: false, reason: "no endpoint (env AZURE_OPENAI_ENDPOINT or ~/.azure-openai-endpoint)" });
+  assert.deepEqual(noEp, { engine: "azure:gpt-6.2-sol", ok: false, reason: "no endpoint (env AZURE_OPENAI_ENDPOINT or ~/.azure-openai-endpoint)" });
   const neither = await run(f, { env: {} });
   assert.equal(neither.ok, false);
   assert.equal(f.calls.length, 0);
@@ -160,7 +160,7 @@ test("azure: AZURE_MAX_TOKENS and model precedence (spec > flag > AZURE_OPENAI_M
   const r = await runSpec("azure:from-spec", { prompt: "hi", env: withEnv, home: "/nohome", readFile: noFile, fetchImpl: viaSpec }, { azure: { model: "from-flag" } });
   assert.equal(r.engine, "azure:from-spec");
   assert.equal(viaSpec.calls[0].body.model, "from-spec");
-  assert.equal(DEFAULT_AZURE_MODEL, "gpt-6.1-sol");
+  assert.equal(DEFAULT_AZURE_MODEL, "gpt-6.2-sol");
 });
 
 test("azure: timeout is AZURE_TIMEOUT, default 300, capped at 600", () => {
@@ -187,8 +187,8 @@ test("azure: order and args", () => {
   assert.ok(MODEL_ENGINES.includes("azure"));
   assert.deepEqual(parseOrderDetailed("azure").order, ["azure"]);
   assert.deepEqual(parseOrderDetailed("azure:gpt-5").order, ["azure:gpt-5"]);
-  assert.deepEqual(parseOrderDetailed("azure:gpt-6.1-sol").order, ["azure"], "default model normalises to bare azure");
-  assert.deepEqual(parseOrderDetailed("azure:gpt-6.1-sol", undefined, { azureModel: "x" }).order, ["azure:gpt-6.1-sol"]);
+  assert.deepEqual(parseOrderDetailed("azure:gpt-6.2-sol").order, ["azure"], "default model normalises to bare azure");
+  assert.deepEqual(parseOrderDetailed("azure:gpt-6.2-sol", undefined, { azureModel: "x" }).order, ["azure:gpt-6.2-sol"]);
   assert.deepEqual(parseOrderDetailed("azure:x", undefined, { azureModel: "x" }).order, ["azure"]);
   assert.ok(parseOrderDetailed(undefined).order.includes("azure"), "in the default order");
   assert.equal(parseArgs(["--azure-model", "gpt-5", "hi"]).azureModel, "gpt-5");
@@ -233,7 +233,7 @@ test("azure: 400 mentioning reasoning_effort retries once without it and notes o
       ok({ content: "fallback ok" }),
     ]);
     const r = await run(f);
-    assert.deepEqual(r, { engine: "azure:gpt-6.1-sol", ok: true, body: "fallback ok" });
+    assert.deepEqual(r, { engine: "azure:gpt-6.2-sol", ok: true, body: "fallback ok" });
     assert.equal(f.calls.length, 2);
     assert.equal(f.calls[0].body.reasoning_effort, "high");
     assert.ok(!("reasoning_effort" in f.calls[1].body));

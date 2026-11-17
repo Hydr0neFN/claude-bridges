@@ -63,7 +63,7 @@ Overrides for the consult panel: `COPILOT_BRIDGE_BIN`, `CODEX_BRIDGE_BIN`, `AGY_
 | `DSAPI_MODEL` | `deepseek-flash` | Default `dsapi` model when neither the order entry nor `--dsapi-model` sets one; must be a flash id (no `pro`/`reasoner`) |
 | `AZURE_OPENAI_KEY` | (unset) | Azure OpenAI key; takes precedence over `~/.azure-openai-key` |
 | `AZURE_OPENAI_ENDPOINT` | (unset) | Azure OpenAI resource endpoint; takes precedence over `~/.azure-openai-endpoint` |
-| `AZURE_OPENAI_MODEL` | `gpt-6.1-sol` | Default Azure model when neither the order entry nor `--azure-model` sets one |
+| `AZURE_OPENAI_MODEL` | `gpt-6.2-sol` | Default Azure model when neither the order entry nor `--azure-model` sets one |
 | `AZURE_MAX_TOKENS` | `16000` | `max_completion_tokens` sent to Azure |
 | `AZURE_TIMEOUT` | `300` | Azure timeout in seconds (positive number); capped at 600, ignores `CONSULT_TIMEOUT` |
 | `AZURE_REASONING_EFFORT` | `high` | `reasoning_effort` sent to Azure (`none\|minimal\|low\|medium\|high\|xhigh\|max`; `none` omits the field) |

@@ -63,7 +63,7 @@ consult 小組的覆寫變數：`COPILOT_BRIDGE_BIN`、`CODEX_BRIDGE_BIN`、`AGY
 | `DSAPI_MODEL` | `deepseek-flash` | 順序項目與 `--dsapi-model` 都未指定時的預設 `dsapi` 模型；必須是 flash ID（不含 `pro`/`reasoner`） |
 | `AZURE_OPENAI_KEY` | （未設定） | Azure OpenAI 金鑰，優先於 `~/.azure-openai-key` |
 | `AZURE_OPENAI_ENDPOINT` | （未設定） | Azure OpenAI 資源端點，優先於 `~/.azure-openai-endpoint` |
-| `AZURE_OPENAI_MODEL` | `gpt-6.1-sol` | 順序項目與 `--azure-model` 都未指定時的預設 Azure 模型 |
+| `AZURE_OPENAI_MODEL` | `gpt-6.2-sol` | 順序項目與 `--azure-model` 都未指定時的預設 Azure 模型 |
 | `AZURE_MAX_TOKENS` | `16000` | 傳給 Azure 的 `max_completion_tokens` |
 | `AZURE_TIMEOUT` | `300` | Azure 逾時秒數（正數）；上限 600，忽略 `CONSULT_TIMEOUT` |
 | `AZURE_REASONING_EFFORT` | `high` | 傳給 Azure 的 `reasoning_effort`（`none\|minimal\|low\|medium\|high\|xhigh\|max`；設為 `none` 時省略此欄位） |
