@@ -322,7 +322,7 @@ test("panelModels: every bare engine has a model to show from the start", async 
   const { panelModels } = await import("../lib/engines.js");
   const m = panelModels({}, {});
   assert.equal(m.copilot, "auto");
-  assert.equal(m.azure, "gpt-6.1-sol");
+  assert.equal(m.azure, "gpt-6.2-sol");
   assert.equal(m.opencode, "beam-free");
   for (const k of ["codex", "deepseek", "dsapi", "agy", "gemini", "nim", "openrouter"]) assert.ok(m[k], k);
 });

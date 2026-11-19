@@ -32,8 +32,17 @@ import { createRunStatus, pruneRuns, runStatusDir } from "./lib/run-status.js";
 const TIMEOUT_SEC = Number(process.env.CONSULT_TIMEOUT) || 300;
 
 const args = parseArgs(process.argv.slice(2));
+const USAGE = 'usage: consult "<prompt>" | --prompt-file <path|-> [--mode all|first] [--order copilot,codex] [--cwd <dir>] [--out-dir <dir>] [--nim-model M] [--openrouter-model M] [--dsapi-model M] [--gemini-model M] [--azure-model M] | --debate <spec.json> --out-dir <dir> | --check-updates | --update | --check-nim-models | --locks | --unlock <engine>';
 
-if (args.refreshNimModels) {
+if (args.help) {
+  console.log(USAGE);
+  process.exit(0);
+} else if (args.unknown.length) {
+  const msg = `consult: unknown option ${args.unknown.join(", ")} (a prompt cannot start with "--"; use --prompt-file)`;
+  if (args.json) console.log(JSON.stringify(envelope(false, "USAGE", msg, {})));
+  console.error(`${msg}\n${USAGE}`);
+  process.exit(2);
+} else if (args.refreshNimModels) {
   // Detached-refresh entry point (also for external hooks): throttled, silent, writes only the cache.
   await refreshNimModels().catch(() => {});
   process.exit(0);
@@ -83,7 +92,7 @@ async function main() {
   }
   if (!prompt && !args.debate && !args.round2) {
     jsonFail("USAGE", "no prompt given");
-    console.error('usage: consult "<prompt>" | --prompt-file <path|-> [--mode all|first] [--order copilot,codex] [--cwd <dir>] [--out-dir <dir>] [--nim-model M] [--openrouter-model M] [--dsapi-model M] [--gemini-model M] [--azure-model M] | --debate <spec.json> --out-dir <dir> | --check-updates | --update | --check-nim-models');
+    console.error(USAGE);
     process.exit(2);
   }
 

@@ -16,8 +16,8 @@ const CLI = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "consu
 const tmpFile = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), "cb-agy-locks-")), "state", "locks.json");
 const NOW = new Date(2026, 10, 16, 12, 0).getTime(); // 2026-11-16 12:00 local
 
-const ARGON = DEFAULT_AGY_MODEL;
-const HYDROGEN = DEFAULT_AGY_FALLBACK_MODEL;
+const PRIMARY = DEFAULT_AGY_MODEL;
+const FALLBACK = DEFAULT_AGY_FALLBACK_MODEL;
 
 /** Fake agy CLI (.js run via process.execPath): scenario[model] = { stdout, stderr, code, delayMs, hang }. */
 function fakeAgy(scenario) {
@@ -53,8 +53,8 @@ else done();
 }
 
 test("agyModel / agyFallbackModel defaults and overrides", () => {
-  assert.equal(DEFAULT_AGY_MODEL, "gemini-4-argon-high");
-  assert.equal(DEFAULT_AGY_FALLBACK_MODEL, "gemini-4-hydrogen-high");
+  assert.equal(DEFAULT_AGY_MODEL, "gemini-4-neon-high");
+  assert.equal(DEFAULT_AGY_FALLBACK_MODEL, "gemini-4-argon-high");
   assert.equal(agyModel({}), DEFAULT_AGY_MODEL);
   assert.equal(agyModel({ AGY_CONSULT_MODEL: "" }), "");
   assert.equal(agyFallbackModel({}), DEFAULT_AGY_FALLBACK_MODEL);
@@ -65,68 +65,68 @@ test("agyModel / agyFallbackModel defaults and overrides", () => {
 
 test("agy: primary succeeds -> labelled agy:<primary>, no note, no locks", async () => {
   const file = tmpFile();
-  const f = fakeAgy({ [ARGON]: { stdout: "argon ok\n" } });
+  const f = fakeAgy({ [PRIMARY]: { stdout: "argon ok\n" } });
   const run = withLocks(runSpec, { file, now: () => NOW });
   const r = await run("agy", { prompt: "hi", cwd: os.tmpdir(), timeoutSec: 60, env: f.env }, {});
-  assert.deepEqual(r, { engine: `agy:${ARGON}`, ok: true, body: "argon ok" });
-  assert.deepEqual(f.calls().map((c) => c.model), [ARGON]);
+  assert.deepEqual(r, { engine: `agy:${PRIMARY}`, ok: true, body: "argon ok" });
+  assert.deepEqual(f.calls().map((c) => c.model), [PRIMARY]);
   assert.deepEqual(readLocks(file), {});
 });
 
-test("agy: quota on Argon -> Hydrogen answers, Argon model lock written, no engine lock, failover note present", async () => {
+test("agy: quota on Neon -> Argon answers, Neon model lock written, no engine lock, failover note present", async () => {
   const file = tmpFile();
   const argonReset = "exit 1: usage limit reached, try again at Nov 23rd, 2026 12:00 PM";
   const expectedUntil = new Date(2026, 10, 23, 12, 0).toISOString();
   const f = fakeAgy({
-    [ARGON]: { stderr: argonReset, code: 1 },
-    [HYDROGEN]: { stdout: "hydrogen ok\n" },
+    [PRIMARY]: { stderr: argonReset, code: 1 },
+    [FALLBACK]: { stdout: "hydrogen ok\n" },
   });
   const run = withLocks(runSpec, { file, now: () => NOW });
   const r = await run("agy", { prompt: "hi", cwd: os.tmpdir(), timeoutSec: 60, env: f.env }, {});
 
   assert.equal(r.ok, true);
-  assert.equal(r.engine, `agy:${HYDROGEN}`);
+  assert.equal(r.engine, `agy:${FALLBACK}`);
   assert.equal(r.body, "hydrogen ok");
-  assert.equal(r.note, `fallback: argon quota-locked until ${localTime(expectedUntil)}`);
-  assert.deepEqual(f.calls().map((c) => c.model), [ARGON, HYDROGEN]);
+  assert.equal(r.note, `fallback: neon quota-locked until ${localTime(expectedUntil)}`);
+  assert.deepEqual(f.calls().map((c) => c.model), [PRIMARY, FALLBACK]);
 
   const locks = readLocks(file);
-  assert.deepEqual(Object.keys(locks), [`agy:${ARGON}`]);
-  assert.equal(locks[`agy:${ARGON}`].until, expectedUntil);
+  assert.deepEqual(Object.keys(locks), [`agy:${PRIMARY}`]);
+  assert.equal(locks[`agy:${PRIMARY}`].until, expectedUntil);
 
-  assert.match(summaryLine([r]), new RegExp(`answered: agy:${HYDROGEN} \\| note: agy:${HYDROGEN}: fallback: argon quota-locked until `));
+  assert.match(summaryLine([r]), new RegExp(`answered: agy:${FALLBACK} \\| note: agy:${FALLBACK}: fallback: neon quota-locked until `));
   assert.equal(engineEntry(r).note, r.note);
 });
 
-test("agy: Argon lock live -> Argon skipped and Hydrogen runs directly", async () => {
+test("agy: Neon lock live -> Neon skipped and Argon runs directly", async () => {
   const file = tmpFile();
   const f1 = fakeAgy({
-    [ARGON]: { stderr: "exit 1: Quota exceeded for model", code: 1 },
-    [HYDROGEN]: { stdout: "first hydrogen\n" },
+    [PRIMARY]: { stderr: "exit 1: Quota exceeded for model", code: 1 },
+    [FALLBACK]: { stdout: "first hydrogen\n" },
   });
   const run = withLocks(runSpec, { file, now: () => NOW });
   await run("agy", { prompt: "hi", cwd: os.tmpdir(), timeoutSec: 60, env: f1.env }, {});
 
   const f2 = fakeAgy({
-    [ARGON]: { stdout: "should not run\n" },
-    [HYDROGEN]: { stdout: "second hydrogen\n" },
+    [PRIMARY]: { stdout: "should not run\n" },
+    [FALLBACK]: { stdout: "second hydrogen\n" },
   });
   const r2 = await run("agy", { prompt: "hi", cwd: os.tmpdir(), timeoutSec: 60, env: f2.env }, {});
   assert.equal(r2.ok, true);
-  assert.equal(r2.engine, `agy:${HYDROGEN}`);
+  assert.equal(r2.engine, `agy:${FALLBACK}`);
   assert.equal(r2.body, "second hydrogen");
-  assert.match(r2.note, /^fallback: argon quota-locked until /);
-  assert.deepEqual(f2.calls().map((c) => c.model), [HYDROGEN]);
+  assert.match(r2.note, /^fallback: neon quota-locked until /);
+  assert.deepEqual(f2.calls().map((c) => c.model), [FALLBACK]);
 });
 
-test("agy: both quota -> Hydrogen model lock and engine-level agy lock written; next call skips agy", async () => {
+test("agy: both quota -> Argon model lock and engine-level agy lock written; next call skips agy", async () => {
   const file = tmpFile();
   const argonErr = "exit 1: usage limit reached, try again at Nov 23rd, 2026 12:00 PM";
   const hydroErr = "exit 1: usage limit reached, try again at Nov 16th, 2026 5:00 PM";
   const hydroUntil = new Date(2026, 10, 16, 17, 0).toISOString();
   const f = fakeAgy({
-    [ARGON]: { stderr: argonErr, code: 1 },
-    [HYDROGEN]: { stderr: hydroErr, code: 1 },
+    [PRIMARY]: { stderr: argonErr, code: 1 },
+    [FALLBACK]: { stderr: hydroErr, code: 1 },
   });
   const run = withLocks(runSpec, { file, now: () => NOW });
   const r1 = await run("agy", { prompt: "hi", cwd: os.tmpdir(), timeoutSec: 60, env: f.env }, {});
@@ -134,12 +134,12 @@ test("agy: both quota -> Hydrogen model lock and engine-level agy lock written; 
   assert.equal(r1.ok, false);
   assert.match(r1.reason, /now locked until 2026-11-16 17:00/);
   const locks = readLocks(file);
-  assert.deepEqual(Object.keys(locks).sort(), ["agy", `agy:${ARGON}`, `agy:${HYDROGEN}`]);
-  assert.equal(locks[`agy:${HYDROGEN}`].until, hydroUntil);
+  assert.deepEqual(Object.keys(locks).sort(), ["agy", `agy:${PRIMARY}`, `agy:${FALLBACK}`].sort());
+  assert.equal(locks[`agy:${FALLBACK}`].until, hydroUntil);
   assert.equal(locks.agy.until, hydroUntil);
 
   // Next call while engine lock is live skips agy entirely.
-  const f2 = fakeAgy({ [HYDROGEN]: { stdout: "never\n" } });
+  const f2 = fakeAgy({ [FALLBACK]: { stdout: "never\n" } });
   const r2 = await run("agy", { prompt: "hi", cwd: os.tmpdir(), timeoutSec: 60, env: f2.env }, {});
   assert.equal(r2.skipped, true);
   assert.equal(f2.calls().length, 0);
@@ -147,16 +147,16 @@ test("agy: both quota -> Hydrogen model lock and engine-level agy lock written; 
 
 test("agy: non-quota failure (crash, auth, timeout) -> no fallback, no locks", async () => {
   for (const sc of [
-    { [ARGON]: { stderr: "boom", code: 1 }, [HYDROGEN]: { stdout: "never" } },
-    { [ARGON]: { stderr: "401 unauthorized, please log in", code: 1 }, [HYDROGEN]: { stdout: "never" } },
-    { [ARGON]: { hang: true }, [HYDROGEN]: { stdout: "never" } },
+    { [PRIMARY]: { stderr: "boom", code: 1 }, [FALLBACK]: { stdout: "never" } },
+    { [PRIMARY]: { stderr: "401 unauthorized, please log in", code: 1 }, [FALLBACK]: { stdout: "never" } },
+    { [PRIMARY]: { hang: true }, [FALLBACK]: { stdout: "never" } },
   ]) {
     const file = tmpFile();
     const f = fakeAgy(sc);
     const run = withLocks(runSpec, { file, now: () => NOW });
     const r = await run("agy", { prompt: "hi", cwd: os.tmpdir(), timeoutSec: 1, env: f.env }, {});
     assert.equal(r.ok, false);
-    assert.deepEqual(f.calls().map((c) => c.model), [ARGON]);
+    assert.deepEqual(f.calls().map((c) => c.model), [PRIMARY]);
     assert.deepEqual(readLocks(file), {});
   }
 });
@@ -164,20 +164,20 @@ test("agy: non-quota failure (crash, auth, timeout) -> no fallback, no locks", a
 test("agy: Argon quota then Hydrogen non-quota failure -> Argon locked, no Hydrogen or engine lock", async () => {
   const file = tmpFile();
   const f = fakeAgy({
-    [ARGON]: { stderr: "exit 1: Quota exceeded for model", code: 1 },
-    [HYDROGEN]: { stderr: "exit 1: boom", code: 1 },
+    [PRIMARY]: { stderr: "exit 1: Quota exceeded for model", code: 1 },
+    [FALLBACK]: { stderr: "exit 1: boom", code: 1 },
   });
   const run = withLocks(runSpec, { file, now: () => NOW });
   const r = await run("agy", { prompt: "hi", cwd: os.tmpdir(), timeoutSec: 60, env: f.env }, {});
   assert.equal(r.ok, false);
-  assert.deepEqual(Object.keys(readLocks(file)), [`agy:${ARGON}`]);
+  assert.deepEqual(Object.keys(readLocks(file)), [`agy:${PRIMARY}`]);
 });
 
 test("agy: fallback runs with remaining time budget", async () => {
   const file = tmpFile();
   const f = fakeAgy({
-    [ARGON]: { stderr: "exit 1: Quota exceeded for model", code: 1, delayMs: 1100 },
-    [HYDROGEN]: { stdout: "ok\n" },
+    [PRIMARY]: { stderr: "exit 1: Quota exceeded for model", code: 1, delayMs: 1100 },
+    [FALLBACK]: { stdout: "ok\n" },
   });
   const r = await ENGINES.agy({ prompt: "hi", cwd: os.tmpdir(), timeoutSec: 5, env: f.env, locksFile: file, now: NOW });
   assert.equal(r.ok, true);
@@ -189,14 +189,14 @@ test("agy: fallback runs with remaining time budget", async () => {
 test("agy: AGY_FALLBACK_MODEL '' -> no fallback; quota writes engine lock as today", async () => {
   const file = tmpFile();
   const f = fakeAgy({
-    [ARGON]: { stderr: "exit 1: Quota exceeded for model", code: 1 },
-    [HYDROGEN]: { stdout: "should not run\n" },
+    [PRIMARY]: { stderr: "exit 1: Quota exceeded for model", code: 1 },
+    [FALLBACK]: { stdout: "should not run\n" },
   });
   const env = { ...f.env, AGY_FALLBACK_MODEL: "" };
   const run = withLocks(runSpec, { file, now: () => NOW });
   const r = await run("agy", { prompt: "hi", cwd: os.tmpdir(), timeoutSec: 60, env }, {});
   assert.equal(r.ok, false);
-  assert.deepEqual(f.calls().map((c) => c.model), [ARGON]);
+  assert.deepEqual(f.calls().map((c) => c.model), [PRIMARY]);
   assert.deepEqual(Object.keys(readLocks(file)), ["agy"]);
 });
 
@@ -209,20 +209,20 @@ test("consult-cli --locks lists model locks and --unlock agy clears engine + agy
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify({
     agy: { until: new Date(future).toISOString(), reason: "limit text, +24 h", at: new Date().toISOString() },
-    [`agy:${ARGON}`]: { until: new Date(future).toISOString(), reason: "usage limit, engine reset time", at: new Date().toISOString() },
-    [`agy:${HYDROGEN}`]: { until: new Date(future).toISOString(), reason: "limit text, +24 h", at: new Date().toISOString() },
+    [`agy:${PRIMARY}`]: { until: new Date(future).toISOString(), reason: "usage limit, engine reset time", at: new Date().toISOString() },
+    [`agy:${FALLBACK}`]: { until: new Date(future).toISOString(), reason: "limit text, +24 h", at: new Date().toISOString() },
     codex: { until: new Date(future).toISOString(), reason: "limit text, +24 h", at: new Date().toISOString() },
   }));
 
   const env = { ...process.env, CONSULT_LOCKS_FILE: file };
   const listed = spawnSync(process.execPath, [CLI, "--locks"], { encoding: "utf8", env, timeout: 10000 });
   assert.equal(listed.status, 0);
-  assert.match(listed.stdout, new RegExp(`agy:${ARGON}: locked until`));
-  assert.match(listed.stdout, new RegExp(`agy:${HYDROGEN}: locked until`));
+  assert.match(listed.stdout, new RegExp(`agy:${PRIMARY}: locked until`));
+  assert.match(listed.stdout, new RegExp(`agy:${FALLBACK}: locked until`));
 
   const unlocked = spawnSync(process.execPath, [CLI, "--unlock", "agy"], { encoding: "utf8", env, timeout: 10000 });
   assert.equal(unlocked.status, 0);
-  assert.match(unlocked.stdout, /unlocked:.*agy:gemini-4-argon-high/);
+  assert.match(unlocked.stdout, /unlocked:.*agy:gemini-4-neon-high/);
   assert.deepEqual(Object.keys(readLocks(file)), ["codex"]);
   assert.deepEqual(Object.keys(activeLocks(file)), ["codex"]);
   assert.deepEqual(unlock("codex", { file }), ["codex"]);
