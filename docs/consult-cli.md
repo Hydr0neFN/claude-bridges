@@ -12,6 +12,7 @@ node consult-cli.js --openrouter-model M "prompt" # model for the openrouter eng
 node consult-cli.js --dsapi-model M "prompt"    # model for the dsapi engine (flash ids only; an order entry dsapi:M wins over this)
 node consult-cli.js --check-nim-models         # force the NIM new-model check now
 node consult-cli.js --prompt-file review.txt   # prompt from a file ("-" = stdin); not combinable with prompt words. Use it for long prompts such as a diff, which can exceed the OS command-line limit
+node consult-cli.js --score "prompt"           # score --mode all answers via decide_many (table + disagreeing points)
 node consult-cli.js --out-dir /tmp/c "prompt"   # also write <dir>/<engine>.md as each engine settles, <dir>/_done at the end (unsafe filename characters such as : and / become _)
 node consult-cli.js --debate spec.json --out-dir /tmp/d   # structured debate (see "Debate mode" below); prints <dir>/digest.md and a TALLY line
 node consult-cli.js --round2 /tmp/c     # round 2 of a finished --out-dir run: answering engines see each other's answers (anonymous), critique, may revise; writes /tmp/c/round2/, prints a dissent block
@@ -56,3 +57,7 @@ On start, both `consult-cli` and `consult-bridge` check (at most once per 24h, c
 ## `consult-cli.js --json`
 
 With `--json` (prompt, `--mode all|first` or `--debate`) stdout is exactly one `{ok,code,message,data}` object instead of the text sections, with a fixed exit-code map; see `cli-json.md`. `data.engines[]` has per-engine `ok`, `code` (`OK`, `QUOTA_EXHAUSTED`, `AUTH_FAILED`, `TIMEOUT`, `NOT_INSTALLED`, `EMPTY_OUTPUT`, `CRASHED`, `ENGINE_ERROR`), `reason`, and `file` (with `--out-dir`) or `body`; `data.quota_exhausted` lists the engines that ran out of quota. Without `--json` nothing changes.
+
+## Panel scoring (`--score`)
+
+Opt-in `--score` (only for `--mode all`; ignored with a one-line note in other modes) calls `decide.py many --kind panel_score --public` after the panel returns (needs >= 3 answers) to score each member's `agrees_with_majority` and `quality` (`wrong|weak|ok|strong`). In text mode it appends a summary table and any disagreeing answers (`p < 0.5`, `confidence >= 0.7`, first 300 chars); with `--json` it adds `data.score` (without `table`). Requires `~/.claude/bin/decide.py` and a Gemini key at `~/.gemini-api-key`; override paths with `CONSULT_SCORE_DECIDE_PY` and `CONSULT_SCORE_PYTHON`. Implementation: `lib/panel-score.js`, tests `test/panel-score.test.js`.

@@ -5,7 +5,7 @@
 // costs nothing until called. Shares lib/engines.js with the MCP version.
 //
 // Engines: copilot, codex, deepseek, agy, nim, openrouter, opencode, dsapi, gemini, azure
-// Usage: consult "<prompt>" | --prompt-file <path|-> [--mode all|first] [--order copilot,codex] [--cwd <dir>] [--out-dir <dir>]
+// Usage: consult "<prompt>" | --prompt-file <path|-> [--mode all|first] [--order copilot,codex] [--cwd <dir>] [--out-dir <dir>] [--score]
 //        [--copilot-model M] [--copilot-effort E] [--codex-model M] [--codex-effort E] [--nim-model M] [--openrouter-model M] [--dsapi-model M] [--gemini-model M] [--azure-model M] [--opencode-model M]
 //        --order entries are `engine` or `engine:model`, e.g. nim:moonshotai/kimi-k3,codex (model wins over the flags)
 //        consult --debate <spec.json> --out-dir <dir>   (structured debate, up to 3 rounds; writes <dir>/digest.md, prints its path + a TALLY line)
@@ -23,6 +23,7 @@ import { validateSpec, loadContext, runDebate } from "./lib/debate.js";
 import { parseArgs, parseOrderDetailed, resolvePrompt, retiredInOrder } from "./lib/args.js";
 import { runEnvelope, envelope, EXIT } from "./lib/cli-json.js";
 import { runPanel, runChain, lastResortNote, formatSection, summaryLine, writeEngineResult, writeDone, CLI_ENGINES, cliSerialEnabled } from "./lib/panel.js";
+import { scorePanel, formatScoreOutput } from "./lib/panel-score.js";
 import { checkUpdates, spawnRefresh, settle, applyUpdates, formatFooter } from "./lib/updates.js";
 import { readRound1, buildRound2Prompt, dissentBlock } from "./lib/round2.js";
 import { withLocks, activeLocks, unlock, localTime } from "./lib/locks.js";
@@ -32,7 +33,7 @@ import { createRunStatus, pruneRuns, runStatusDir } from "./lib/run-status.js";
 const TIMEOUT_SEC = Number(process.env.CONSULT_TIMEOUT) || 300;
 
 const args = parseArgs(process.argv.slice(2));
-const USAGE = 'usage: consult "<prompt>" | --prompt-file <path|-> [--mode all|first] [--order copilot,codex] [--cwd <dir>] [--out-dir <dir>] [--nim-model M] [--openrouter-model M] [--dsapi-model M] [--gemini-model M] [--azure-model M] | --debate <spec.json> --out-dir <dir> | --check-updates | --update | --check-nim-models | --locks | --unlock <engine>';
+const USAGE = 'usage: consult "<prompt>" | --prompt-file <path|-> [--mode all|first] [--order copilot,codex] [--cwd <dir>] [--out-dir <dir>] [--score] [--nim-model M] [--openrouter-model M] [--dsapi-model M] [--gemini-model M] [--azure-model M] | --debate <spec.json> --out-dir <dir> | --check-updates | --update | --check-nim-models | --locks | --unlock <engine>';
 
 if (args.help) {
   console.log(USAGE);
@@ -201,6 +202,7 @@ async function main() {
       jsonFail(e?.code === "ENOENT" ? "NOT_FOUND" : "USAGE", e.message);
       return finish(e?.code === "ENOENT" ? EXIT.notFound : 2);
     }
+    if (args.score) console.error("[consult] --score ignored (only supported in --mode all)");
     const dir2 = path.join(args.round2, "round2");
     const r2Order = r1.answers.map((a) => a.label);
     const status = startStatus({ kind: "round2", question: r1.prompt, order: r2Order, rounds: 2 });
@@ -235,6 +237,7 @@ async function main() {
       jsonFail(missing ? "NOT_FOUND" : "USAGE", e.message);
       return finish(missing ? EXIT.notFound : 2);
     }
+    if (args.score) console.error("[consult] --score ignored (only supported in --mode all)");
     const status = startStatus({
       kind: "debate",
       question: spec.question,
@@ -261,6 +264,7 @@ ${tally}`);
   const run = (name) => trackRun(status, name, () => runLocked(name, { prompt, cwd, timeoutSec: TIMEOUT_SEC }, opts)).then((r) => (ran.push(r), r));
 
   if (mode === "first") {
+    if (args.score) console.error("[consult] --score ignored (only supported in --mode all)");
     const { result: r, trail } = await runChain(order, run);
     const note = r ? [r.note, lastResortNote(r)].filter(Boolean).join("; ") : "";
     const summary = r
@@ -296,8 +300,14 @@ ${tally}`);
   const summary = summaryLine(results);
   const failMsg = summary ? null : `consult: all engines failed.\n${results.map((r) => `- ${r.engine}: ${r.reason}`).join("\n")}`;
   status.end(summary || failMsg);
+  const answers = summary && args.score ? results.filter((r) => r.ok).map((r) => ({ engine: r.engine, text: r.body ?? "" })) : null;
+  const score = answers ? await scorePanel({ prompt, answers }) : null;
   if (args.json) {
     const env = runEnvelope({ mode: "all", results, outDir: args.outDir || undefined });
+    if (score) {
+      const { table: _table, ...scoreData } = score;
+      env.data.score = scoreData;
+    }
     if (args.outDir) writeDone(args.outDir, summary || failMsg);
     if (!summary) console.error(failMsg);
     console.log(JSON.stringify(env));
@@ -310,5 +320,9 @@ ${tally}`);
   }
   if (args.outDir) writeDone(args.outDir, summary);
   console.log(`---\n${summary}`);
+  if (score) {
+    if (score.ok) console.log(`\n${formatScoreOutput(score, answers)}`);
+    else console.error(`[consult] score skipped: ${score.reason}`);
+  }
   return finish(0);
 }
