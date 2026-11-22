@@ -8,7 +8,7 @@ The `consult` tool currently fans out to **five engines**:
 |---|---|---|
 | `copilot` | GitHub Copilot CLI (`copilot -p`) | Free (GitHub) |
 | `codex` | OpenAI Codex CLI (`codex exec`) | Free (ChatGPT) |
-| `agy` | Antigravity / Gemini CLI | Google AI Plus (low quota); **in the default order while it drains its remaining quota (2026-10-27); removed once exhausted** |
+| `agy` | Antigravity / Gemini CLI | Google AI Plus (low quota); **opt-in (no longer in default order)** |
 | `deepseek` | `deeperseeker` proxy over a DeepSeek web account (HTTP, not a CLI) | Free (throwaway account) |
 | `nim` | NVIDIA NIM hosted API (HTTP, not a CLI) | Free trial tier; in the default order, with a 4-model fallback chain |
 | `openrouter` | OpenRouter free models (HTTP, not a CLI) | Free (rate-limited); in the default order (after `nim`), with a 5-model fallback chain |
@@ -16,17 +16,18 @@ The `consult` tool currently fans out to **five engines**:
 | `dsapi` | Official DeepSeek API, flash models only (HTTP, not a CLI) | Pay-per-token (cheap); **opt-in (not in default order)**, but also the automatic fallback of `deepseek` |
 | `gemini` | Google Gemini API (OpenAI-compatible endpoint, HTTP, not a CLI) | AI Studio free-tier key (`GEMINI_API_KEY` or `~/.gemini-api-key`); prompt-only; in the default order (last), and also the automatic fallback of `agy` |
 | `azure` | Azure OpenAI chat completions (HTTP, not a CLI) | Azure subscription key (`AZURE_OPENAI_KEY` or `~/.azure-openai-key`) plus endpoint (`AZURE_OPENAI_ENDPOINT` or `~/.azure-openai-endpoint`); `AZURE_REASONING_EFFORT` defaults to `high` (`none` omits it); in the default order (after `opencode`); one model, no chain; prompt-only |
+| `vertex` | Google Cloud Vertex AI OpenAI-compatible endpoint, location `global` (HTTP, not a CLI) | GCP service-account key file `~/.gcp-vertex-key.json` (env `VERTEX_KEY_FILE`; project via `VERTEX_PROJECT` or `project_id` in key file); model `<publisher>/<model>`, default `google/gemini-4-neon`; in the default order (`vertex:google/gemini-4-neon` and `vertex:zai-org/glm-5.2-maas`); one model per call, no chain; prompt-only |
 
-`agy` was opt-in because its Google AI Plus quota is small; since 2026-10-27 it is in the default order until that quota is used up (before: opt in with `--order copilot,codex,deepseek,agy`)
+`agy` is opt-in because its Google AI Plus quota is small (no longer in the default order; opt in with `--order copilot,codex,deepseek,agy`)
 or the MCP `order` argument, ideally once per review.
 Its primary model is `AGY_CONSULT_MODEL` (default `gemini-4-argon-high`, weekly quota) with `AGY_FALLBACK_MODEL` (default `gemini-4-hydrogen-high`, separate 5-hour quota; `""` disables fallback). On a usage/quota limit, `agy` locks the primary model (`agy:<primary>`) and runs the fallback once in the same call with the remaining time budget (skipping the primary while its model lock is live); non-quota failures (timeout, crash, auth) do not fall back. Only when the fallback also hits a usage/quota limit does the engine-level `agy` lock apply (locking `agy:<fallback>` too). Results are labelled `agy:<model that answered>`, with a `fallback: argon quota-locked until <time>` note when the fallback answered; `--locks` lists model locks and `--unlock agy` clears both the engine lock and `agy:*` model locks.
 
 `deepseek` is in the default `CONSULT_ORDER` (last, so in mode `first` it is only a fallback). It needs the
 `deeperseeker` proxy on `127.0.0.1:4000`; if the proxy is down or has no key, it falls back to the official API (`dsapi`, flash only, label `deepseek->dsapi`; see below), or fails soft
-if that has no key either, and the other engines still answer. `nim` is in the default order too (after `deepseek`, so the default panel is `copilot,codex,deepseek,agy,nim,openrouter,opencode,azure,gemini`); it walks a fallback chain, see below.
-`openrouter` is in the default order too (last; since 2026-10-27, so the default panel is `copilot,codex,deepseek,agy,nim,openrouter,opencode,azure,gemini`). Its default model (`baidu/ernie-5.5-flash-preview:free`) is a different family from `nim`'s, so the two count as separate voices. Drop it with an explicit `--order` (e.g. `--order copilot,codex,deepseek`).
+if that has no key either, and the other engines still answer. `nim` is in the default order too (so the default panel is `copilot,codex,deepseek,vertex:google/gemini-4-neon,nim,openrouter,opencode,azure,gemini,vertex:zai-org/glm-5.2-maas`); it walks a fallback chain, see below.
+`openrouter` is in the default order too (since 2026-10-27, so the default panel is `copilot,codex,deepseek,vertex:google/gemini-4-neon,nim,openrouter,opencode,azure,gemini,vertex:zai-org/glm-5.2-maas`). Its default model (`baidu/ernie-5.5-flash-preview:free`) is a different family from `nim`'s, so the two count as separate voices. Drop it with an explicit `--order` (e.g. `--order copilot,codex,deepseek`).
 `dsapi` is opt-in as well (`--order copilot,codex,deepseek,dsapi`), and `deepseek` falls back to it on its own (see below).
-Unlike the CLI engines, `deepseek`, `nim`, `openrouter` and `dsapi` get no cwd, shell or file access — they only ever see the prompt text, so give them self-contained prompts.
+Unlike the CLI engines, `deepseek`, `nim`, `openrouter`, `dsapi`, `azure`, `gemini` and `vertex` get no cwd, shell or file access — they only ever see the prompt text, so give them self-contained prompts.
 
 ## `openrouter` (OpenRouter free models)
 
@@ -98,7 +99,7 @@ Set up the key once: put it in `~/.nvidia-nim-key` (restrict it: `chmod 600` on 
 Windows rely on your user-profile ACL) or export `NIM_API_KEY`. The environment variable wins.
 
 Order entries may be `engine` or `engine:model` (split on the first `:`, so model ids with `/` work).
-A model is accepted on `copilot`, `codex`, `nim`, `deepseek`, `openrouter` and `dsapi`; `agy:x` and unknown engines are dropped.
+A model is accepted on `copilot`, `codex`, `nim`, `deepseek`, `openrouter`, `dsapi`, `gemini`, `azure`, `opencode` and `vertex`; `agy:x` and unknown engines are dropped.
 (`copilot:<model>` is accepted syntactically, but auto-only Copilot plans reject `--model`; the engine then retries once on auto
 and labels the result `copilot (auto; <model> unavailable on this plan)`.) `nim:<default model>` is the same entry as bare `nim`
 and is deduplicated.

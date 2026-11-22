@@ -354,7 +354,7 @@ test("parseOrder: openrouter:<default model> is the same entry as bare openroute
 });
 
 test("default order includes openrouter (after nim)", () => {
-  assert.deepEqual(parseOrder(undefined), ["copilot", "codex", "deepseek", "agy", "nim", "openrouter", "opencode", "azure", "gemini"]);
+  assert.deepEqual(parseOrder(undefined), ["copilot", "codex", "deepseek", "vertex", "nim", "openrouter", "opencode", "azure", "gemini", "vertex:zai-org/glm-5.2-maas"]);
 });
 
 test("parseArgs: --openrouter-model", () => {

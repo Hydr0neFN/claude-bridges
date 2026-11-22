@@ -25,7 +25,7 @@ test("parseArgs: flags, prompt words, update flags", () => {
 
 test("parseOrder: filters unknown engines, applies default", () => {
   assert.deepEqual(parseOrder("copilot, nope ,codex"), ["copilot", "codex"]);
-  assert.deepEqual(parseOrder(undefined), ["copilot", "codex", "deepseek", "agy", "nim", "openrouter", "opencode", "azure", "gemini"]);
+  assert.deepEqual(parseOrder(undefined), ["copilot", "codex", "deepseek", "vertex", "nim", "openrouter", "opencode", "azure", "gemini", "vertex:zai-org/glm-5.2-maas"]);
 });
 
 test("searchDirs: extra dirs only off win32", () => {

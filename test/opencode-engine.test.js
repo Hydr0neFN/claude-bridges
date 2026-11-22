@@ -47,10 +47,10 @@ process.stdin.on("end", () => {
   return { env: { OPENCODE_PATH: script, OPENCODE_CHAIN: CHAIN5 }, calls: () => (fs.existsSync(log) ? JSON.parse(fs.readFileSync(log, "utf8")) : []) };
 }
 
-test("opencode is registered: model engine, lockable, last of the old default and then azure, gemini", () => {
+test("opencode is registered: model engine, lockable, default tail openrouter, opencode, azure, gemini, vertex:zai-org/glm-5.2-maas", () => {
   assert.ok(MODEL_ENGINES.includes("opencode"));
   assert.ok(LOCKABLE.includes("opencode"));
-  assert.deepEqual(parseOrder(undefined).slice(-4), ["openrouter", "opencode", "azure", "gemini"]);
+  assert.deepEqual(parseOrder(undefined).slice(-5), ["openrouter", "opencode", "azure", "gemini", "vertex:zai-org/glm-5.2-maas"]);
   assert.equal(parseArgs(["--opencode-model", "big-pickle", "x"]).opencodeModel, "big-pickle");
   assert.deepEqual(parseOrder(`opencode:${DEFAULT_OPENCODE_MODEL},opencode`), ["opencode"]);
 });

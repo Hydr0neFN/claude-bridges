@@ -32,7 +32,7 @@ Overrides for the consult panel: `COPILOT_BRIDGE_BIN`, `CODEX_BRIDGE_BIN`, `AGY_
 | `CONSULT_TIMEOUT` | `300` | Per-engine timeout in seconds (not used by `nim`, see `NIM_TIMEOUT`) |
 | `CONSULT_MAX_OUTPUT_CHARS` | `50000` | Total output truncation cap |
 | `CONSULT_PER_ENGINE_CHARS` | `20000` | Per-engine truncation in `all` mode |
-| `CONSULT_ORDER` | `copilot,codex,deepseek,agy,nim,openrouter,opencode,azure,gemini` | Default engine order |
+| `CONSULT_ORDER` | `copilot,codex,deepseek,vertex:google/gemini-4-neon,nim,openrouter,opencode,azure,gemini,vertex:zai-org/glm-5.2-maas` | Default engine order |
 | `CONSULT_MODE` | `all` | Default mode (`all` or `first`) |
 | `COPILOT_MODEL` | (unset = auto) | Passed as `--model` only when set. If Copilot rejects it (auto-only plans such as Student), retried once on auto and labelled `copilot (auto; <model> unavailable on this plan)` |
 | `COPILOT_EFFORT` | (unset) | `--reasoning-effort none\|minimal\|low\|medium\|high\|xhigh\|max` |
@@ -63,7 +63,12 @@ Overrides for the consult panel: `COPILOT_BRIDGE_BIN`, `CODEX_BRIDGE_BIN`, `AGY_
 | `DSAPI_MODEL` | `deepseek-flash` | Default `dsapi` model when neither the order entry nor `--dsapi-model` sets one; must be a flash id (no `pro`/`reasoner`) |
 | `AZURE_OPENAI_KEY` | (unset) | Azure OpenAI key; takes precedence over `~/.azure-openai-key` |
 | `AZURE_OPENAI_ENDPOINT` | (unset) | Azure OpenAI resource endpoint; takes precedence over `~/.azure-openai-endpoint` |
-| `AZURE_OPENAI_MODEL` | `gpt-6.2-sol` | Default Azure model when neither the order entry nor `--azure-model` sets one |
+| `AZURE_OPENAI_MODEL` | `gpt-6.2-astra` | Default Azure model when neither the order entry nor `--azure-model` sets one |
 | `AZURE_MAX_TOKENS` | `16000` | `max_completion_tokens` sent to Azure |
 | `AZURE_TIMEOUT` | `300` | Azure timeout in seconds (positive number); capped at 600, ignores `CONSULT_TIMEOUT` |
 | `AZURE_REASONING_EFFORT` | `high` | `reasoning_effort` sent to Azure (`none\|minimal\|low\|medium\|high\|xhigh\|max`; `none` omits the field) |
+| `VERTEX_KEY_FILE` | `~/.gcp-vertex-key.json` | GCP service-account JSON key file |
+| `VERTEX_PROJECT` | (project_id from key file) | GCP project id; overrides `project_id` from the key file |
+| `VERTEX_MODEL` | `google/gemini-4-neon` | Default Vertex AI model when neither the order entry nor `--vertex-model` sets one |
+| `VERTEX_TIMEOUT` | `300` | Vertex AI timeout in seconds (positive number); capped at 600, ignores `CONSULT_TIMEOUT` |
+| `VERTEX_MAX_TOKENS` | `16000` | `max_tokens` sent to Vertex AI (positive integer) |

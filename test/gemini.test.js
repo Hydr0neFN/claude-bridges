@@ -183,7 +183,7 @@ test("parseOrder / parseArgs: gemini entries, default model normalisation, --gem
   assert.deepEqual(parseOrder("gemini:m,gemini", undefined, { geminiModel: "m" }), ["gemini"]);
   assert.equal(parseArgs(["--gemini-model", "a-m", "hi"]).geminiModel, "a-m");
   assert.equal(parseArgs(["hi"]).geminiModel, null);
-  assert.deepEqual(parseOrder(undefined), ["copilot", "codex", "deepseek", "agy", "nim", "openrouter", "opencode", "azure", "gemini"]);
+  assert.deepEqual(parseOrder(undefined), ["copilot", "codex", "deepseek", "vertex", "nim", "openrouter", "opencode", "azure", "gemini", "vertex:zai-org/glm-5.2-maas"]);
 });
 
 /** withGeminiFallback over a withLocks-wrapped run: agy fails with a quota reason, everything else is runSpec. */

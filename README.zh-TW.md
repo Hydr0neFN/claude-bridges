@@ -39,9 +39,9 @@ flowchart TD
 
 這跟「隨便問問 ChatGPT」是兩回事。每個模型都有自己的角色、沙盒與審查關卡。
 
-小組成員就是 `CONSULT_ORDER` 裡的引擎（預設 `copilot,codex,deepseek,agy,nim,openrouter,opencode,azure,gemini`）。`mode: all`（預設）把同一個 prompt 平行送給全部引擎，每個成功的回答都會標上引擎名稱。`mode: first` 則是依序的備援鏈，第一個成功就停。某個引擎失敗會換下一個，過程會附在結果後面。
+小組成員就是 `CONSULT_ORDER` 裡的引擎（預設 `copilot,codex,deepseek,vertex:google/gemini-4-neon,nim,openrouter,opencode,azure,gemini,vertex:zai-org/glm-5.2-maas`）。`mode: all`（預設）把同一個 prompt 平行送給全部引擎，每個成功的回答都會標上引擎名稱。`mode: first` 則是依序的備援鏈，第一個成功就停。某個引擎失敗會換下一個，過程會附在結果後面。
 
-`deepseek`、`nim`、`openrouter` 與 `dsapi` 沒有 cwd、shell 或檔案存取權限 —— 它們只看得到 prompt 文字，所以 prompt 必須自帶完整脈絡。
+`deepseek`、`nim`、`openrouter`、`dsapi`、`azure`、`gemini` 與 `vertex` 沒有 cwd、shell 或檔案存取權限 —— 它們只看得到 prompt 文字，所以 prompt 必須自帶完整脈絡。`vertex` 以 GCP 服務帳號金鑰（`VERTEX_KEY_FILE` 或 `~/.gcp-vertex-key.json`）呼叫 Vertex AI 的 OpenAI 相容端點，每次呼叫單一模型（預設 `google/gemini-4-neon`）。
 
 完整引擎表、各條備援鏈與逾時設定在 [docs/engines.zh-TW.md](docs/engines.zh-TW.md)。
 

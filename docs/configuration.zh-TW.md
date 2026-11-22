@@ -32,7 +32,7 @@ consult 小組的覆寫變數：`COPILOT_BRIDGE_BIN`、`CODEX_BRIDGE_BIN`、`AGY
 | `CONSULT_TIMEOUT` | `300` | 各引擎逾時時間（秒）（`nim` 不適用，請見 `NIM_TIMEOUT`） |
 | `CONSULT_MAX_OUTPUT_CHARS` | `50000` | 總輸出截斷上限字數 |
 | `CONSULT_PER_ENGINE_CHARS` | `20000` | `all` 模式下各引擎截斷字數 |
-| `CONSULT_ORDER` | `copilot,codex,deepseek,agy,nim,openrouter,opencode,azure,gemini` | 預設引擎順序 |
+| `CONSULT_ORDER` | `copilot,codex,deepseek,vertex:google/gemini-4-neon,nim,openrouter,opencode,azure,gemini,vertex:zai-org/glm-5.2-maas` | 預設引擎順序 |
 | `CONSULT_MODE` | `all` | 預設模式（`all` 或 `first`） |
 | `COPILOT_MODEL` | （未設 = auto） | 僅在設定時以 `--model` 傳入。若 Copilot 拒絕（如 Student 方案僅支援 auto），會改用 auto 重試一次並標示為 `copilot (auto; <model> unavailable on this plan)` |
 | `COPILOT_EFFORT` | （未設） | `--reasoning-effort none\|minimal\|low\|medium\|high\|xhigh\|max` |
@@ -63,7 +63,12 @@ consult 小組的覆寫變數：`COPILOT_BRIDGE_BIN`、`CODEX_BRIDGE_BIN`、`AGY
 | `DSAPI_MODEL` | `deepseek-flash` | 順序項目與 `--dsapi-model` 都未指定時的預設 `dsapi` 模型；必須是 flash ID（不含 `pro`/`reasoner`） |
 | `AZURE_OPENAI_KEY` | （未設定） | Azure OpenAI 金鑰，優先於 `~/.azure-openai-key` |
 | `AZURE_OPENAI_ENDPOINT` | （未設定） | Azure OpenAI 資源端點，優先於 `~/.azure-openai-endpoint` |
-| `AZURE_OPENAI_MODEL` | `gpt-6.2-sol` | 順序項目與 `--azure-model` 都未指定時的預設 Azure 模型 |
+| `AZURE_OPENAI_MODEL` | `gpt-6.2-astra` | 順序項目與 `--azure-model` 都未指定時的預設 Azure 模型 |
 | `AZURE_MAX_TOKENS` | `16000` | 傳給 Azure 的 `max_completion_tokens` |
 | `AZURE_TIMEOUT` | `300` | Azure 逾時秒數（正數）；上限 600，忽略 `CONSULT_TIMEOUT` |
 | `AZURE_REASONING_EFFORT` | `high` | 傳給 Azure 的 `reasoning_effort`（`none\|minimal\|low\|medium\|high\|xhigh\|max`；設為 `none` 時省略此欄位） |
+| `VERTEX_KEY_FILE` | `~/.gcp-vertex-key.json` | GCP 服務帳號 JSON 金鑰檔案路徑 |
+| `VERTEX_PROJECT` | （金鑰檔中的 `project_id`） | GCP 專案 ID；設定時優先於金鑰檔中的 `project_id` |
+| `VERTEX_MODEL` | `google/gemini-4-neon` | 順序項目與 `--vertex-model` 都未指定時的預設 Vertex AI 模型 |
+| `VERTEX_TIMEOUT` | `300` | Vertex AI 逾時秒數（正數）；上限 600，忽略 `CONSULT_TIMEOUT` |
+| `VERTEX_MAX_TOKENS` | `16000` | 傳給 Vertex AI 的 `max_tokens`（正整數） |

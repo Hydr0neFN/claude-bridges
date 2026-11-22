@@ -4,9 +4,9 @@
 // context floor and can be left dangling by tool-search deferral; as a CLI it
 // costs nothing until called. Shares lib/engines.js with the MCP version.
 //
-// Engines: copilot, codex, deepseek, agy, nim, openrouter, opencode, dsapi, gemini, azure
+// Engines: copilot, codex, deepseek, agy, nim, openrouter, opencode, dsapi, gemini, azure, vertex
 // Usage: consult "<prompt>" | --prompt-file <path|-> [--mode all|first] [--order copilot,codex] [--cwd <dir>] [--out-dir <dir>] [--score]
-//        [--copilot-model M] [--copilot-effort E] [--codex-model M] [--codex-effort E] [--nim-model M] [--openrouter-model M] [--dsapi-model M] [--gemini-model M] [--azure-model M] [--opencode-model M]
+//        [--copilot-model M] [--copilot-effort E] [--codex-model M] [--codex-effort E] [--nim-model M] [--openrouter-model M] [--dsapi-model M] [--gemini-model M] [--azure-model M] [--opencode-model M] [--vertex-model M]
 //        --order entries are `engine` or `engine:model`, e.g. nim:moonshotai/kimi-k3,codex (model wins over the flags)
 //        consult --debate <spec.json> --out-dir <dir>   (structured debate, up to 3 rounds; writes <dir>/digest.md, prints its path + a TALLY line)
 //        --json (with a prompt, --mode all|first or --debate): stdout is exactly one {ok,code,message,data} object (docs/cli-json.md)
@@ -33,7 +33,7 @@ import { createRunStatus, pruneRuns, runStatusDir } from "./lib/run-status.js";
 const TIMEOUT_SEC = Number(process.env.CONSULT_TIMEOUT) || 300;
 
 const args = parseArgs(process.argv.slice(2));
-const USAGE = 'usage: consult "<prompt>" | --prompt-file <path|-> [--mode all|first] [--order copilot,codex] [--cwd <dir>] [--out-dir <dir>] [--score] [--nim-model M] [--openrouter-model M] [--dsapi-model M] [--gemini-model M] [--azure-model M] | --debate <spec.json> --out-dir <dir> | --check-updates | --update | --check-nim-models | --locks | --unlock <engine>';
+const USAGE = 'usage: consult "<prompt>" | --prompt-file <path|-> [--mode all|first] [--order copilot,codex] [--cwd <dir>] [--out-dir <dir>] [--score] [--nim-model M] [--openrouter-model M] [--dsapi-model M] [--gemini-model M] [--azure-model M] [--vertex-model M] | --debate <spec.json> --out-dir <dir> | --check-updates | --update | --check-nim-models | --locks | --unlock <engine>';
 
 if (args.help) {
   console.log(USAGE);
@@ -97,12 +97,12 @@ async function main() {
     process.exit(2);
   }
 
-  // agy is in the default set only while it drains its remaining quota (owner 2026-10-27); drop it here and in lib/args.js once it reports quota exhausted.
-  const rawOrder = args.order || process.env.CONSULT_ORDER || "copilot,codex,deepseek,agy,nim,openrouter,opencode,azure,gemini";
+  // agy stays a valid engine (opt-in); its quota is kept for farmer work.
+  const rawOrder = args.order || process.env.CONSULT_ORDER || "copilot,codex,deepseek,vertex:google/gemini-4-neon,nim,openrouter,opencode,azure,gemini,vertex:zai-org/glm-5.2-maas";
   // A retired engine is a hard usage error, not a silent drop (parseOrderDetailed still drops unknown entries).
   const retiredEntry = retiredInOrder(rawOrder);
   if (retiredEntry) {
-    const msg = `consult: engine ${retiredEntry} was removed (unknown engine); use copilot,codex,deepseek,agy,nim,openrouter,opencode,gemini,azure`;
+    const msg = `consult: engine ${retiredEntry} was removed (unknown engine); use copilot,codex,deepseek,agy,nim,openrouter,opencode,gemini,azure,vertex`;
     jsonFail("USAGE", msg);
     console.error(msg);
     process.exit(2);
@@ -114,10 +114,11 @@ async function main() {
     geminiModel: args.geminiModel || process.env.GEMINI_MODEL,
     azureModel: args.azureModel || process.env.AZURE_OPENAI_MODEL,
     opencodeModel: args.opencodeModel,
+    vertexModel: args.vertexModel || process.env.VERTEX_MODEL,
   });
   if (dropped.length) console.error(`consult: ignoring invalid order entries: ${dropped.join(", ")}`);
   if (!order.length) {
-    console.error("consult: no valid engine in the order (use engine or engine:model; a model only on copilot, codex, nim, deepseek, openrouter, opencode, dsapi, gemini, azure)");
+    console.error("consult: no valid engine in the order (use engine or engine:model; a model only on copilot, codex, nim, deepseek, openrouter, opencode, dsapi, gemini, azure, vertex)");
     jsonFail("USAGE", "no valid engine in the order");
     process.exit(2);
   }
@@ -139,6 +140,7 @@ async function main() {
     dsapi: { model: args.dsapiModel },
     gemini: { model: args.geminiModel },
     azure: { model: args.azureModel },
+    vertex: { model: args.vertexModel },
     opencode: { model: args.opencodeModel, panel: { order, get ran() { return ran; } } },
   };
   if (args.outDir && !args.debate && !args.round2) {

@@ -8,7 +8,7 @@
 |---|---|---|
 | `copilot` | GitHub Copilot CLI (`copilot -p`) | Free (GitHub) |
 | `codex` | OpenAI Codex CLI (`codex exec`) | Free (ChatGPT) |
-| `agy` | Antigravity / Gemini CLI | Google AI Plus（配額少）；**2026-10-27 起列入預設順序，直到剩餘配額用完為止** |
+| `agy` | Antigravity / Gemini CLI | Google AI Plus（配額少）；**選用（已不再列入預設順序）** |
 | `deepseek` | 以 `deeperseeker` proxy 代理 DeepSeek 網頁帳號（HTTP，非 CLI） | Free（拋棄式帳號） |
 | `nim` | NVIDIA NIM 託管 API（HTTP，非 CLI） | Free 試用方案；列入預設順序，帶 4 個模型的備援鏈 |
 | `openrouter` | OpenRouter 免費模型（HTTP，非 CLI） | Free（有速率限制）；列入預設順序（在 `nim` 之後），並帶有 5 個模型的備援鏈 |
@@ -16,15 +16,16 @@
 | `dsapi` | DeepSeek 官方 API，僅限 flash 模型（HTTP，非 CLI） | 按量計費（便宜）；**選用（不在預設順序中）**，但同時是 `deepseek` 的自動備援 |
 | `gemini` | Google Gemini API（OpenAI 相容端點，HTTP，非 CLI） | Google AI Studio 免費方案金鑰（`GEMINI_API_KEY` 或 `~/.gemini-api-key`）；僅傳 prompt；列入預設順序（最後），同時是 `agy` 的自動備援 |
 | `azure` | Azure OpenAI 聊天補全（HTTP，非 CLI） | Azure 訂閱金鑰（`AZURE_OPENAI_KEY` 或 `~/.azure-openai-key`）加端點（`AZURE_OPENAI_ENDPOINT` 或 `~/.azure-openai-endpoint`）；`AZURE_REASONING_EFFORT` 預設為 `high`（`none` 則省略）；列入預設順序（在 `opencode` 之後）；單一模型、無備援鏈；僅傳 prompt |
+| `vertex` | Google Cloud Vertex AI OpenAI 相容端點，location `global`（HTTP，非 CLI） | GCP 服務帳號金鑰檔 `~/.gcp-vertex-key.json`（環境變數 `VERTEX_KEY_FILE`；專案由 `VERTEX_PROJECT` 或金鑰檔中的 `project_id` 取得）；模型格式 `<publisher>/<model>`，預設 `google/gemini-4-neon`；列入預設順序（`vertex:google/gemini-4-neon` 與 `vertex:zai-org/glm-5.2-maas`）；每次呼叫單一模型、無備援鏈；僅傳 prompt |
 
-`agy` 原本採選用制（Google AI Plus 配額很少）；2026-10-27 起列入預設順序，配額用完即移除（之前以 `--order copilot,codex,deepseek,agy`
+`agy` 採選用制，因為它的 Google AI Plus 配額很少（已不再列入預設順序；請以 `--order copilot,codex,deepseek,agy`
 或 MCP 的 `order` 引數加入，建議每次審查只呼叫一次）。
 主模型為 `AGY_CONSULT_MODEL`（預設 `gemini-4-argon-high`，每週配額），備援模型為 `AGY_FALLBACK_MODEL`（預設 `gemini-4-hydrogen-high`，獨立的 5 小時配額；設為 `""` 則停用備援）。遇到用量／配額上限時，`agy` 會先寫入模型鎖（`agy:<主模型>`），並在同一次呼叫中以剩餘時間預算改跑備援模型一次（主模型鎖有效期間會直接跳過主模型）；逾時、當機、驗證失敗等非配額錯誤不會觸發備援。只有在備援模型也撞到用量／配額上限時，才會寫入整個 `agy` 引擎鎖（同時鎖住 `agy:<備援模型>`）。結果會標示為 `agy:<實際回答的模型>`，由備援回答時會附上 `fallback: argon quota-locked until <time>` 附註；`--locks` 會列出模型鎖，`--unlock agy` 會一併清除引擎鎖與 `agy:*` 模型鎖。
 
 `deepseek` 已列入預設的 `CONSULT_ORDER`（排在最後，因此在 `first` 模式下僅作為備援）。它需要 `deeperseeker` proxy
 在 `127.0.0.1:4000` 運作；若 proxy 未啟動或沒有金鑰，會自動改走官方 API（`dsapi`，僅限 flash，標示 `deepseek->dsapi`，見下），若也沒有金鑰則軟性失敗，其他引擎仍會照常回答。
-`nim` 也已列入預設順序（在 `deepseek` 之後，預設為 `copilot,codex,deepseek,agy,nim,openrouter,opencode,azure,gemini`），並帶有 4 個模型的備援鏈（`nvidia/nemotron-3-ultra-550b-a55b` -> `minimaxai/minimax-m3.1-flash` -> `nvidia/nemotron-3.5-super-vl-120b-a12b` -> `z-ai/glm-5.3-flash`，可用 `NIM_CHAIN` 覆寫；每步最多 120 秒，整條鏈受 `NIM_TIMEOUT` 限制，上限 600 秒）；明確寫 `nim:<其他模型>` 時只跑該模型、不走備援鏈。`openrouter` 自 2026-10-27 起同樣列入預設順序，預設模型 `baidu/ernie-5.5-flash-preview:free` 與 `nim` 不同家族（兩條備援鏈的模型家族完全不重疊，由測試保證），兩者算作獨立的聲音；要排除它請明確指定 `--order`（例如 `--order copilot,codex,deepseek`）。`dsapi` 也是選用制（`--order copilot,codex,deepseek,dsapi`），且 `deepseek` 會自動備援到它（見下）。
-與其他 CLI 引擎不同，`deepseek`、`nim`、`openrouter` 與 `dsapi` 沒有 cwd、shell 或檔案存取權限 ——
+`nim` 也已列入預設順序（預設為 `copilot,codex,deepseek,vertex:google/gemini-4-neon,nim,openrouter,opencode,azure,gemini,vertex:zai-org/glm-5.2-maas`），並帶有 4 個模型的備援鏈（`nvidia/nemotron-3-ultra-550b-a55b` -> `minimaxai/minimax-m3.1-flash` -> `nvidia/nemotron-3.5-super-vl-120b-a12b` -> `z-ai/glm-5.3-flash`，可用 `NIM_CHAIN` 覆寫；每步最多 120 秒，整條鏈受 `NIM_TIMEOUT` 限制，上限 600 秒）；明確寫 `nim:<其他模型>` 時只跑該模型、不走備援鏈。`openrouter` 自 2026-10-27 起同樣列入預設順序，預設模型 `baidu/ernie-5.5-flash-preview:free` 與 `nim` 不同家族（兩條備援鏈的模型家族完全不重疊，由測試保證），兩者算作獨立的聲音；要排除它請明確指定 `--order`（例如 `--order copilot,codex,deepseek`）。`dsapi` 也是選用制（`--order copilot,codex,deepseek,dsapi`），且 `deepseek` 會自動備援到它（見下）。
+與其他 CLI 引擎不同，`deepseek`、`nim`、`openrouter`、`dsapi`、`azure`、`gemini` 與 `vertex` 沒有 cwd、shell 或檔案存取權限 ——
 只看得到 prompt 文字本身，因此送給它們的 prompt 必須自帶完整脈絡。
 
 ## `openrouter`（OpenRouter 免費模型）
@@ -92,7 +93,7 @@ proxy 正常回答時完全不變；proxy 回 4xx 或指定了 `deepseek:<model>
 Windows 則依賴使用者設定檔的 ACL），或設定環境變數 `NIM_API_KEY`（環境變數優先）。
 
 順序中的項目可寫成 `engine` 或 `engine:model`（只以第一個 `:` 切分，因此含 `/` 的模型 ID 可正常使用）。
-`copilot`、`codex`、`nim`、`deepseek`、`openrouter`、`dsapi` 支援指定模型；`agy:x` 與未知引擎會被忽略。
+`copilot`、`codex`、`nim`、`deepseek`、`openrouter`、`dsapi`、`gemini`、`azure`、`opencode`、`vertex` 支援指定模型；`agy:x` 與未知引擎會被忽略。
 （`copilot:<model>` 在語法上可接受，但僅支援自動選模型的 Copilot 方案會拒絕 `--model`；此時引擎會改用自動模式重試一次，
 並將結果標示為 `copilot (auto; <model> unavailable on this plan)`。）`nim:<預設模型>` 與單獨的 `nim` 視為同一項目，會去除重複。
 如此一次諮詢即可同時詢問多個 NIM 模型，結果會標示為 `nim:<model>`：

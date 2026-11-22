@@ -39,9 +39,9 @@ flowchart TD
 
 This isn't "ask ChatGPT." Each model has a role, a sandbox, and a review gate.
 
-The panel is the engines in `CONSULT_ORDER` (default `copilot,codex,deepseek,agy,nim,openrouter,opencode,azure,gemini`). In `mode: all` (the default) one prompt goes to all of them in parallel and every successful answer comes back labelled by engine. In `mode: first` they run as a sequential fallback chain and the first success wins. A failed engine fails over to the next, and the trail is appended to the result.
+The panel is the engines in `CONSULT_ORDER` (default `copilot,codex,deepseek,vertex:google/gemini-4-neon,nim,openrouter,opencode,azure,gemini,vertex:zai-org/glm-5.2-maas`). In `mode: all` (the default) one prompt goes to all of them in parallel and every successful answer comes back labelled by engine. In `mode: first` they run as a sequential fallback chain and the first success wins. A failed engine fails over to the next, and the trail is appended to the result.
 
-`deepseek`, `nim`, `openrouter` and `dsapi` get no cwd, shell or file access — they only ever see the prompt text, so their prompts must be self-contained.
+`deepseek`, `nim`, `openrouter`, `dsapi`, `azure`, `gemini` and `vertex` get no cwd, shell or file access — they only ever see the prompt text, so their prompts must be self-contained. `vertex` calls Vertex AI's OpenAI-compatible endpoint with a GCP service-account key (`VERTEX_KEY_FILE` or `~/.gcp-vertex-key.json`), one model per call (default `google/gemini-4-neon`).
 
 The full engine table, each fallback chain, and the per-engine timeouts are in [docs/engines.md](docs/engines.md).
 

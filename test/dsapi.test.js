@@ -345,7 +345,7 @@ test("parseOrder: dsapi and dsapi:<model> entries; dsapi:<default model> is bare
 });
 
 test("default order does not include dsapi", () => {
-  assert.deepEqual(parseOrder(undefined), ["copilot", "codex", "deepseek", "agy", "nim", "openrouter", "opencode", "azure", "gemini"]);
+  assert.deepEqual(parseOrder(undefined), ["copilot", "codex", "deepseek", "vertex", "nim", "openrouter", "opencode", "azure", "gemini", "vertex:zai-org/glm-5.2-maas"]);
 });
 
 test("parseArgs: --dsapi-model", () => {
