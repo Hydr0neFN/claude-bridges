@@ -5,8 +5,9 @@
 // costs nothing until called. Shares lib/engines.js with the MCP version.
 //
 // Engines: copilot, codex, deepseek, agy, nim, openrouter, opencode, dsapi, gemini, azure, vertex
-// Usage: consult "<prompt>" | --prompt-file <path|-> [--mode all|first] [--order copilot,codex] [--cwd <dir>] [--out-dir <dir>] [--score]
+// Usage: consult "<prompt>" | --prompt-file <path|-> [--mode all|first] [--order copilot,codex] [--cwd <dir>] [--out-dir <dir>] [--no-score] [--score]
 //        [--copilot-model M] [--copilot-effort E] [--codex-model M] [--codex-effort E] [--nim-model M] [--openrouter-model M] [--dsapi-model M] [--gemini-model M] [--azure-model M] [--opencode-model M] [--vertex-model M]
+//        Panel scoring is default for --mode all (--no-score disables; --score is a no-op alias); with --out-dir, stdout prints a compact score summary and full answers are in --out-dir files.
 //        --order entries are `engine` or `engine:model`, e.g. nim:moonshotai/kimi-k3,codex (model wins over the flags)
 //        consult --debate <spec.json> --out-dir <dir>   (structured debate, up to 3 rounds; writes <dir>/digest.md, prints its path + a TALLY line)
 //        --json (with a prompt, --mode all|first or --debate): stdout is exactly one {ok,code,message,data} object (docs/cli-json.md)
@@ -18,6 +19,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { runSpec, dsapiUsageNotice, withGeminiFallback, parseSpec, panelModels } from "./lib/engines.js";
 import { validateSpec, loadContext, runDebate } from "./lib/debate.js";
 import { parseArgs, parseOrderDetailed, resolvePrompt, retiredInOrder } from "./lib/args.js";
@@ -32,56 +34,98 @@ import { createRunStatus, pruneRuns, runStatusDir } from "./lib/run-status.js";
 
 const TIMEOUT_SEC = Number(process.env.CONSULT_TIMEOUT) || 300;
 
-const args = parseArgs(process.argv.slice(2));
-const USAGE = 'usage: consult "<prompt>" | --prompt-file <path|-> [--mode all|first] [--order copilot,codex] [--cwd <dir>] [--out-dir <dir>] [--score] [--nim-model M] [--openrouter-model M] [--dsapi-model M] [--gemini-model M] [--azure-model M] [--vertex-model M] | --debate <spec.json> --out-dir <dir> | --check-updates | --update | --check-nim-models | --locks | --unlock <engine>';
+const USAGE =
+  'usage: consult "<prompt>" | --prompt-file <path|-> [--mode all|first] [--order copilot,codex] [--cwd <dir>] [--out-dir <dir>] [--no-score] [--score] [--nim-model M] [--openrouter-model M] [--dsapi-model M] [--gemini-model M] [--azure-model M] [--vertex-model M] | --debate <spec.json> --out-dir <dir> | --check-updates | --update | --check-nim-models | --locks | --unlock <engine>\n' +
+  '       scoring is default for --mode all (--no-score to disable; --score is a no-op alias); with --out-dir, stdout is compact and full answers are in --out-dir files';
 
-if (args.help) {
-  console.log(USAGE);
-  process.exit(0);
-} else if (args.unknown.length) {
-  const msg = `consult: unknown option ${args.unknown.join(", ")} (a prompt cannot start with "--"; use --prompt-file)`;
-  if (args.json) console.log(JSON.stringify(envelope(false, "USAGE", msg, {})));
-  console.error(`${msg}\n${USAGE}`);
-  process.exit(2);
-} else if (args.refreshNimModels) {
-  // Detached-refresh entry point (also for external hooks): throttled, silent, writes only the cache.
-  await refreshNimModels().catch(() => {});
-  process.exit(0);
-} else if (args.checkNimModels) {
-  const { skipped, cache } = await refreshNimModels({ force: true });
-  if (skipped === "no key") console.log("[consult] NIM: no key configured (env NIM_API_KEY or ~/.nvidia-nim-key), check skipped");
-  else if (cache?.error) console.log(`[consult] NIM: check failed: ${cache.error}`);
-  else console.log(formatNimNotice(cache) || `[consult] NIM: no new models (${cache?.seen.length ?? 0} known)`);
-  // Only a listing failure in THIS run is an error; a stale error in the cache must not fail a no-key run.
-  process.exit(skipped === null && cache?.error ? 1 : 0);
-} else if (args.locks || args.unlock) {
-  if (args.unlock) {
-    const done = unlock(args.unlock);
-    console.log(done.length ? `[consult] unlocked: ${done.join(", ")}` : `[consult] no lock for ${args.unlock}`);
-  } else {
-    const rows = Object.entries(activeLocks()).map(([n, e]) => `${n}: locked until ${localTime(e.until)} (${e.reason})`);
-    console.log(rows.length ? rows.join("\n") : "[consult] no active locks");
+/** Parse CLI args, supporting --no-score as opt-out while keeping --score as a no-op alias. */
+export function parseCliArgs(argv) {
+  const args = parseArgs(argv);
+  const hasNoScore = args.unknown.includes("--no-score");
+  if (hasNoScore) {
+    args.unknown = args.unknown.filter((u) => u !== "--no-score");
   }
-  process.exit(0);
-} else if (args.checkUpdates || args.update) {
-  const { items } = await settle(checkUpdates({ force: true }), 60000);
-  if (args.update) {
-    const { log, failed } = await applyUpdates({ items });
-    for (const line of log) console.log(line);
-    process.exit(failed ? 1 : 0);
-  } else {
-    console.log(formatFooter(items) || "[consult] everything up to date");
-  }
-} else {
-  await main();
+  const noScore = hasNoScore && (!args.score || argv.lastIndexOf("--no-score") > argv.lastIndexOf("--score"));
+  return { ...args, noScore };
 }
 
-// --json: the envelope is the whole stdout; the human message still goes to stderr.
-function jsonFail(code, message) {
-  if (args.json) console.log(JSON.stringify(envelope(false, code, message, {})));
+/** Scoring is default-on for --mode all unless --no-score is given; --mode first never scores. */
+export function shouldScorePanel({ mode, noScore }) {
+  return mode !== "first" && !noScore;
 }
 
-async function main() {
+export function formatDisagreementsFallback(score) {
+  const rows = (score?.rows || []).filter((r) => r.agrees === "n");
+  if (!rows.length) return "";
+  const lines = rows.map((r) => {
+    const rawReason = r.reason ?? r.agrees_reason ?? r.note ?? "";
+    const reason = String(rawReason).replace(/\s+/g, " ").trim();
+    return reason ? `- ${r.engine}: ${reason}` : `- ${r.engine}`;
+  });
+  return `Disagreements:\n${lines.join("\n")}`;
+}
+
+export function formatCompactScoredOutput({ summary, score, answers, outDir }) {
+  const parts = [summary];
+  const scoreOut = formatScoreOutput(score, answers);
+  if (scoreOut) parts.push(scoreOut);
+  if (!scoreOut.includes("Disagreeing points:")) {
+    const extra = formatDisagreementsFallback(score);
+    if (extra) parts.push(extra);
+  }
+  parts.push(`Full answers: ${path.resolve(outDir)}`);
+  return parts.join("\n\n");
+}
+
+async function cliEntry() {
+  const args = parseCliArgs(process.argv.slice(2));
+  if (args.help) {
+    console.log(USAGE);
+    process.exit(0);
+  } else if (args.unknown.length) {
+    const msg = `consult: unknown option ${args.unknown.join(", ")} (a prompt cannot start with "--"; use --prompt-file)`;
+    if (args.json) console.log(JSON.stringify(envelope(false, "USAGE", msg, {})));
+    console.error(`${msg}\n${USAGE}`);
+    process.exit(2);
+  } else if (args.refreshNimModels) {
+    // Detached-refresh entry point (also for external hooks): throttled, silent, writes only the cache.
+    await refreshNimModels().catch(() => {});
+    process.exit(0);
+  } else if (args.checkNimModels) {
+    const { skipped, cache } = await refreshNimModels({ force: true });
+    if (skipped === "no key") console.log("[consult] NIM: no key configured (env NIM_API_KEY or ~/.nvidia-nim-key), check skipped");
+    else if (cache?.error) console.log(`[consult] NIM: check failed: ${cache.error}`);
+    else console.log(formatNimNotice(cache) || `[consult] NIM: no new models (${cache?.seen.length ?? 0} known)`);
+    // Only a listing failure in THIS run is an error; a stale error in the cache must not fail a no-key run.
+    process.exit(skipped === null && cache?.error ? 1 : 0);
+  } else if (args.locks || args.unlock) {
+    if (args.unlock) {
+      const done = unlock(args.unlock);
+      console.log(done.length ? `[consult] unlocked: ${done.join(", ")}` : `[consult] no lock for ${args.unlock}`);
+    } else {
+      const rows = Object.entries(activeLocks()).map(([n, e]) => `${n}: locked until ${localTime(e.until)} (${e.reason})`);
+      console.log(rows.length ? rows.join("\n") : "[consult] no active locks");
+    }
+    process.exit(0);
+  } else if (args.checkUpdates || args.update) {
+    const { items } = await settle(checkUpdates({ force: true }), 60000);
+    if (args.update) {
+      const { log, failed } = await applyUpdates({ items });
+      for (const line of log) console.log(line);
+      process.exit(failed ? 1 : 0);
+    } else {
+      console.log(formatFooter(items) || "[consult] everything up to date");
+    }
+  } else {
+    await main(args);
+  }
+}
+
+async function main(args) {
+  // --json: the envelope is the whole stdout; the human message still goes to stderr.
+  const jsonFail = (code, message) => {
+    if (args.json) console.log(JSON.stringify(envelope(false, code, message, {})));
+  };
   let prompt;
   try {
     prompt = args.debate || args.round2 ? "" : resolvePrompt(args);
@@ -288,43 +332,122 @@ ${tally}`);
     return finish(1);
   }
 
+  const exitCode = await executeModeAll({
+    prompt,
+    order,
+    run,
+    serial,
+    outDir: args.outDir,
+    json: args.json,
+    scoreWanted: shouldScorePanel({ mode, noScore: args.noScore }),
+  }, {
+    endStatus: (msg) => status.end(msg),
+  });
+  return finish(exitCode);
+}
+
+export async function executeModeAll(
+  {
+    prompt,
+    order,
+    run,
+    serial,
+    outDir = null,
+    json = false,
+    scoreWanted = true,
+  },
+  deps = {},
+) {
+  const panelRunner = deps.runPanel || runPanel;
+  const scorer = deps.scorePanel || scorePanel;
+  const writeResult = deps.writeEngineResult || writeEngineResult;
+  const writeDoneFn = deps.writeDone || writeDone;
+  const endStatus = deps.endStatus || (() => {});
+  const outLog = deps.log || ((s) => console.log(s));
+  const errLog = deps.error || ((s) => console.error(s));
+
+  const compact = Boolean(scoreWanted && !json && outDir);
+  const settledSections = [];
+
   // Each engine's whole section is printed the moment it settles (completion order);
   // console.log of one string is a single write, so sections never interleave.
-  const results = await runPanel({
+  // In compact mode (scoring on, text stdout, --out-dir given), buffer sections in case scoring fails.
+  const results = await panelRunner({
     order,
     run,
     serial,
     onSettle: (name, r) => {
-      if (!args.json) console.log(formatSection(r));
-      if (args.outDir) writeEngineResult(args.outDir, name, r);
+      const section = formatSection(r);
+      if (compact) settledSections.push(section);
+      else if (!json) outLog(section);
+      if (outDir) writeResult(outDir, name, r);
     },
   });
   const summary = summaryLine(results);
   const failMsg = summary ? null : `consult: all engines failed.\n${results.map((r) => `- ${r.engine}: ${r.reason}`).join("\n")}`;
-  status.end(summary || failMsg);
-  const answers = summary && args.score ? results.filter((r) => r.ok).map((r) => ({ engine: r.engine, text: r.body ?? "" })) : null;
-  const score = answers ? await scorePanel({ prompt, answers }) : null;
-  if (args.json) {
-    const env = runEnvelope({ mode: "all", results, outDir: args.outDir || undefined });
+  endStatus(summary || failMsg);
+  const answers = summary && scoreWanted ? results.filter((r) => r.ok).map((r) => ({ engine: r.engine, text: r.body ?? "" })) : null;
+  let score = null;
+  if (answers) {
+    try {
+      score = await scorer({ prompt, answers });
+    } catch (e) {
+      score = { ok: false, reason: e?.message || String(e) };
+    }
+    if (!score || typeof score !== "object") {
+      score = { ok: false, reason: "empty score result" };
+    }
+  }
+  if (json) {
+    const env = runEnvelope({ mode: "all", results, outDir: outDir || undefined });
     if (score) {
       const { table: _table, ...scoreData } = score;
       env.data.score = scoreData;
     }
-    if (args.outDir) writeDone(args.outDir, summary || failMsg);
-    if (!summary) console.error(failMsg);
-    console.log(JSON.stringify(env));
-    return finish(summary ? 0 : 1);
+    if (outDir) writeDoneFn(outDir, summary || failMsg);
+    if (!summary) errLog(failMsg);
+    outLog(JSON.stringify(env));
+    return summary ? 0 : 1;
   }
   if (!summary) {
-    if (args.outDir) writeDone(args.outDir, failMsg);
-    console.error(failMsg);
-    return finish(1);
+    if (compact) for (const section of settledSections) outLog(section);
+    if (outDir) writeDoneFn(outDir, failMsg);
+    errLog(failMsg);
+    return 1;
   }
-  if (args.outDir) writeDone(args.outDir, summary);
-  console.log(`---\n${summary}`);
+  if (outDir) writeDoneFn(outDir, summary);
+  if (compact && score?.ok) {
+    let compactText = null;
+    try {
+      compactText = formatCompactScoredOutput({ summary, score, answers, outDir });
+    } catch {
+      errLog("[consult] score skipped: format error");
+    }
+    if (compactText !== null) {
+      outLog(compactText);
+      return 0;
+    }
+  }
+  if (compact) {
+    for (const section of settledSections) outLog(section);
+  }
+  outLog(`---\n${summary}`);
   if (score) {
-    if (score.ok) console.log(`\n${formatScoreOutput(score, answers)}`);
-    else console.error(`[consult] score skipped: ${score.reason}`);
+    if (score.ok) outLog(`\n${formatScoreOutput(score, answers)}`);
+    else errLog(`[consult] score skipped: ${score.reason}`);
   }
-  return finish(0);
+  return 0;
+}
+
+function isMainModule() {
+  if (!process.argv[1]) return false;
+  try {
+    return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return true;
+  }
+}
+
+if (isMainModule()) {
+  await cliEntry();
 }
