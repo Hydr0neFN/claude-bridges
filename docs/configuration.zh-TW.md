@@ -38,8 +38,8 @@ consult 小組的覆寫變數：`COPILOT_BRIDGE_BIN`、`CODEX_BRIDGE_BIN`、`AGY
 | `COPILOT_EFFORT` | （未設） | `--reasoning-effort none\|minimal\|low\|medium\|high\|xhigh\|max` |
 | `CODEX_MODEL` | （未設） | 僅在設定時以 `-m` 傳入 |
 | `CODEX_EFFORT` | （未設） | 以 `-c model_reasoning_effort="..."` 傳入 |
-| `AGY_CONSULT_MODEL` | `gemini-4-argon-high` | `agy` 主模型（每週配額）；設為 `""` 則改用 `agy` 自身預設 |
-| `AGY_FALLBACK_MODEL` | `gemini-4-hydrogen-high` | 主模型遇到用量／配額上限時於同一次呼叫中改用的備援模型（獨立的 5 小時配額）；設為 `""` 則停用備援 |
+| `AGY_CONSULT_MODEL` | `gemini-4-neon-high` | `agy` 主模型（agy「Gemini Models」配額池）；設為 `""` 則改用 `agy` 自身預設 |
+| `AGY_FALLBACK_MODEL` | `""`（不設） | 主模型撞到用量／配額上限時，同一次呼叫改跑的備援模型。agy 的 Gemini 模型全用同一個配額池，所以只能設成別的配額池裡的模型 |
 | `CLAUDE_BRIDGES_CACHE_DIR` | `~/.cache/claude-bridges` | 更新檢查的快取位置 |
 | `DEEPSEEKER_BASE` | `http://127.0.0.1:4000` | deeperseeker proxy 的 base URL |
 | `DEEPSEEKER_MODEL` | `v4.1flash` | 傳給 proxy 的 model id |

@@ -17,7 +17,8 @@ const tmpFile = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), "cb-agy-lo
 const NOW = new Date(2026, 10, 16, 12, 0).getTime(); // 2026-11-16 12:00 local
 
 const PRIMARY = DEFAULT_AGY_MODEL;
-const FALLBACK = DEFAULT_AGY_FALLBACK_MODEL;
+// The default has no fallback (2026-11-24: every agy Gemini model shares one quota bucket); the fallback tests opt in via env.
+const FALLBACK = "gemini-4-argon-high";
 
 /** Fake agy CLI (.js run via process.execPath): scenario[model] = { stdout, stderr, code, delayMs, hang }. */
 function fakeAgy(scenario) {
@@ -47,14 +48,14 @@ if (s.delayMs) setTimeout(done, s.delayMs);
 else done();
 `);
   return {
-    env: { AGY_PATH: script },
+    env: { AGY_PATH: script, AGY_FALLBACK_MODEL: FALLBACK },
     calls: () => (fs.existsSync(log) ? JSON.parse(fs.readFileSync(log, "utf8")) : []),
   };
 }
 
 test("agyModel / agyFallbackModel defaults and overrides", () => {
   assert.equal(DEFAULT_AGY_MODEL, "gemini-4-neon-high");
-  assert.equal(DEFAULT_AGY_FALLBACK_MODEL, "gemini-4-argon-high");
+  assert.equal(DEFAULT_AGY_FALLBACK_MODEL, "");
   assert.equal(agyModel({}), DEFAULT_AGY_MODEL);
   assert.equal(agyModel({ AGY_CONSULT_MODEL: "" }), "");
   assert.equal(agyFallbackModel({}), DEFAULT_AGY_FALLBACK_MODEL);

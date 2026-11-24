@@ -38,8 +38,8 @@ Overrides for the consult panel: `COPILOT_BRIDGE_BIN`, `CODEX_BRIDGE_BIN`, `AGY_
 | `COPILOT_EFFORT` | (unset) | `--reasoning-effort none\|minimal\|low\|medium\|high\|xhigh\|max` |
 | `CODEX_MODEL` | (unset) | Passed as `-m` only when set |
 | `CODEX_EFFORT` | (unset) | Passed as `-c model_reasoning_effort="..."` |
-| `AGY_CONSULT_MODEL` | `gemini-4-argon-high` | Primary `agy` model (weekly quota); `""` lets `agy` pick its own default |
-| `AGY_FALLBACK_MODEL` | `gemini-4-hydrogen-high` | Fallback `agy` model (separate 5-hour quota) used once in the same call when the primary hits a usage/quota limit; `""` disables fallback |
+| `AGY_CONSULT_MODEL` | `gemini-4-neon-high` | Primary `agy` model (agy "Gemini Models" quota bucket); `""` lets `agy` pick its own default |
+| `AGY_FALLBACK_MODEL` | `""` (none) | Fallback `agy` model used once in the same call when the primary hits a usage/quota limit; set it only to a model in another agy quota bucket (all agy Gemini models share one) |
 | `CLAUDE_BRIDGES_CACHE_DIR` | `~/.cache/claude-bridges` | Update-check cache location |
 | `DEEPSEEKER_BASE` | `http://127.0.0.1:4000` | deeperseeker proxy base URL |
 | `DEEPSEEKER_MODEL` | `v4.1flash` | Model id passed to the proxy |
