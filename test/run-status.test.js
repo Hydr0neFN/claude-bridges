@@ -133,6 +133,21 @@ test("question truncation: first non-empty trimmed line, max 140 chars, no promp
   assert.ok(!raw.includes("Q".repeat(141)));
 });
 
+test("question line skips bare heading and label lines and drops heading marks", () => {
+  const dir = tmpDir();
+  let pid = 200;
+  const q = (question) => {
+    pid += 1;
+    const st = createRunStatus({ kind: "all", question, order: ["copilot"], rounds: 1, dir, now: () => 1763300002000, pid });
+    return JSON.parse(fs.readFileSync(st.file, "utf8")).question;
+  };
+  assert.equal(q("# Question:\n\nShould the panel use a ring or a list?\n"), "Should the panel use a ring or a list?");
+  assert.equal(q("## Context\nTask:\nPick a cache key for the farmer jobs"), "Pick a cache key for the farmer jobs");
+  assert.equal(q("# Review the retry loop in ds-job.py\nbody"), "Review the retry loop in ds-job.py");
+  assert.equal(q("Fix it?"), "Fix it?");
+  assert.equal(q("# Question:"), "Question:");
+});
+
 test("round2 defaults round to 2 and rounds to 2", () => {
   const dir = tmpDir();
   const st = createRunStatus({
