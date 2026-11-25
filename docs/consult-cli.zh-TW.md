@@ -12,6 +12,7 @@ node consult-cli.js --openrouter-model M "prompt" # 指定 openrouter 引擎的�
 node consult-cli.js --dsapi-model M "prompt"    # 指定 dsapi 引擎的模型（僅限 flash ID；順序中的 dsapi:M 優先於此旗標）
 node consult-cli.js --check-nim-models         # 立即強制執行 NIM 新模型檢查
 node consult-cli.js --prompt-file review.txt   # 從檔案讀取 prompt（"-" 代表標準輸入），不可與 prompt 文字並用。適用於 diff 等長 prompt，避免超出作業系統的命令列長度上限
+node consult-cli.js --topic "Ring or list for the panel" --prompt-file q.md   # flightdeck 問題列要顯示的短標題（寫進 run status 檔），引擎收到的仍是完整 prompt。沒給的話，就顯示 prompt 裡第一行有內容的句子，像 "# Question:" 這種純標題行會跳過
 node consult-cli.js --out-dir /tmp/c "prompt"   # 每個引擎完成時即寫入 <dir>/<engine>.md，全部完成後寫入 <dir>/_done（檔名中的 : 與 / 等不安全字元會改為 _）
 node consult-cli.js --debate spec.json --out-dir /tmp/d   # 結構化辯論（見下方「辯論模式」）；印出 <dir>/digest.md 與 TALLY 行
 node consult-cli.js --round2 /tmp/c     # 對已完成的 --out-dir 跑第二輪：有回答的引擎會看到彼此的答案（匿名），互相批評、可修改；寫入 /tmp/c/round2/，印出 dissent 區塊

@@ -35,7 +35,7 @@ import { createRunStatus, pruneRuns, runStatusDir } from "./lib/run-status.js";
 const TIMEOUT_SEC = Number(process.env.CONSULT_TIMEOUT) || 300;
 
 const USAGE =
-  'usage: consult "<prompt>" | --prompt-file <path|-> [--mode all|first] [--order copilot,codex] [--cwd <dir>] [--out-dir <dir>] [--no-score] [--score] [--nim-model M] [--openrouter-model M] [--dsapi-model M] [--gemini-model M] [--azure-model M] [--vertex-model M] | --debate <spec.json> --out-dir <dir> | --check-updates | --update | --check-nim-models | --locks | --unlock <engine>\n' +
+  'usage: consult "<prompt>" | --prompt-file <path|-> [--mode all|first] [--order copilot,codex] [--cwd <dir>] [--out-dir <dir>] [--topic "<short title>"] [--no-score] [--score] [--nim-model M] [--openrouter-model M] [--dsapi-model M] [--gemini-model M] [--azure-model M] [--vertex-model M] | --debate <spec.json> --out-dir <dir> | --check-updates | --update | --check-nim-models | --locks | --unlock <engine>\n' +
   '       scoring is default for --mode all (--no-score to disable; --score is a no-op alias); with --out-dir, stdout is compact and full answers are in --out-dir files';
 
 /** Parse CLI args, supporting --no-score as opt-out while keeping --score as a no-op alias. */
@@ -202,7 +202,9 @@ async function main(args) {
     const dir = runStatusDir();
     pruneRuns(dir);
     // Every engine names its model from the start, so the ring can show it before the answer arrives.
-    return createRunStatus({ kind, question, order: runOrder, rounds, dir, models: panelModels(args) });
+    // A caller's --topic replaces the prompt's first line as the panel's question line.
+    const topic = typeof args.topic === "string" && args.topic.trim() ? args.topic : null;
+    return createRunStatus({ kind, question: topic ?? question, order: runOrder, rounds, dir, models: panelModels(args) });
   };
   const trackRun = (status, name, call) => {
     status.start(name);

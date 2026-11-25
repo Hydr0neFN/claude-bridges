@@ -13,6 +13,7 @@ node consult-cli.js --dsapi-model M "prompt"    # model for the dsapi engine (fl
 node consult-cli.js --check-nim-models         # force the NIM new-model check now
 node consult-cli.js --prompt-file review.txt   # prompt from a file ("-" = stdin); not combinable with prompt words. Use it for long prompts such as a diff, which can exceed the OS command-line limit
 node consult-cli.js --score "prompt"           # score --mode all answers via decide_many (table + disagreeing points)
+node consult-cli.js --topic "Ring or list for the panel" --prompt-file q.md   # short title for the flightdeck question line (run status file); the engines still get the full prompt. Without it, the line is the first prompt line that is not a bare heading such as "# Question:"
 node consult-cli.js --out-dir /tmp/c "prompt"   # also write <dir>/<engine>.md as each engine settles, <dir>/_done at the end (unsafe filename characters such as : and / become _)
 node consult-cli.js --debate spec.json --out-dir /tmp/d   # structured debate (see "Debate mode" below); prints <dir>/digest.md and a TALLY line
 node consult-cli.js --round2 /tmp/c     # round 2 of a finished --out-dir run: answering engines see each other's answers (anonymous), critique, may revise; writes /tmp/c/round2/, prints a dissent block

@@ -28,3 +28,11 @@ test("consult-cli --help output mentions --no-score and default scoring", () => 
   assert.match(r.stdout, /--mode all/);
   assert.match(r.stdout, /--out-dir/);
 });
+
+test("parseArgs: --topic takes a value and stays out of the prompt; --help lists it", () => {
+  const a = parseArgs(["--topic", "Ring or list for the consult panel", "review", "this"]);
+  assert.equal(a.topic, "Ring or list for the consult panel");
+  assert.deepEqual(a.prompt, ["review", "this"]);
+  const r = spawnSync(process.execPath, [CLI, "--help"], { encoding: "utf8" });
+  assert.match(r.stdout, /--topic "<short title>"/);
+});
